@@ -2,91 +2,48 @@ package com.myhosh.booking;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import java.util.List;
+import java.util.Map;
 
 @CrossOrigin(origins = "*")
 @RestController
-@RequestMapping("/api/bookings")
-public class BookingController {
+@RequestMapping("/api/staff")
+public class StaffController {
 
-    private final BookingRepository bookingRepository;
-    private final CustomerRepository customerRepository;
-    private final RestaurantTableRepository tableRepository;
+    private final StaffMemberRepository staffRepository;
 
-    public BookingController(
-            BookingRepository bookingRepository,
-            CustomerRepository customerRepository,
-            RestaurantTableRepository tableRepository
-    ) {
-        this.bookingRepository = bookingRepository;
-        this.customerRepository = customerRepository;
-        this.tableRepository = tableRepository;
+    public StaffController(StaffMemberRepository staffRepository) {
+        this.staffRepository = staffRepository;
     }
 
-    @GetMapping
-    public List<Booking> getAllBookings() {
-        return bookingRepository.findAll();
+    // 1. Endpoint to Register a New Staff Member (Admin Only later)
+    @PostMapping("/register")
+    public ResponseEntity<?> registerStaff(@RequestBody StaffMember newStaff) {
+        if (staffRepository.findByUsername(newStaff.getUsername()) != null) {
+            return ResponseEntity.badRequest().body("Username already exists.");
+        }
+
+        // Default role if not provided
+        if (newStaff.getRole() == null || newStaff.getRole().isEmpty()) {
+            newStaff.setRole("STAFF");
+        }
+
+        StaffMember savedStaff = staffRepository.save(newStaff);
+        return ResponseEntity.ok(savedStaff);
     }
 
-    @PostMapping
-    public ResponseEntity<?> createBooking(@RequestBody Booking newBooking) {
-        boolean isTaken = bookingRepository.existsByRestaurantTableIdAndBookingDateAndBookingTime(
-                newBooking.getRestaurantTable().getId(),
-                newBooking.getBookingDate(),
-                newBooking.getBookingTime()
-        );
+    // 2. Endpoint to Check Login Credentials
+    @PostMapping("/login")
+    public ResponseEntity<?> loginStaff(@RequestBody Map<String, String> credentials) {
+        String username = credentials.get("username");
+        String password = credentials.get("password");
 
-        if (isTaken) {
-            return ResponseEntity.badRequest().body("This table is already reserved for this time slot.");
+        StaffMember staff = staffRepository.findByUsername(username);
+
+        if (staff != null && staff.getPassword().equals(password)) {
+            // Success: send back the user details (without password ideally, but for now this works)
+            return ResponseEntity.ok(staff);
+        } else {
+            return ResponseEntity.status(401).body("Invalid username or password.");
         }
-
-        if (newBooking.getCustomer() != null && newBooking.getCustomer().getId() == null) {
-            customerRepository.save(newBooking.getCustomer());
-        }
-
-        Booking savedBooking = bookingRepository.save(newBooking);
-        return ResponseEntity.ok(savedBooking);
-    }
-
-    // --- CANCEL BOOKING ENDPOINT (STAFF & ADMIN) ---
-    @DeleteMapping("/{id}")
-    public ResponseEntity<?> cancelBooking(@PathVariable Long id) {
-        if (!bookingRepository.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        bookingRepository.deleteById(id);
-        return ResponseEntity.ok("Booking cancelled successfully.");
-    }
-
-    // --- REASSIGN TABLE ENDPOINT (STAFF & ADMIN) ---
-    @PutMapping("/{id}/table/{tableId}")
-    public ResponseEntity<?> reassignTable(@PathVariable Long id, @PathVariable Long tableId) {
-        var bookingOpt = bookingRepository.findById(id);
-        if (bookingOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-
-        var tableOpt = tableRepository.findById(tableId);
-        if (tableOpt.isEmpty()) {
-            return ResponseEntity.badRequest().body("Selected table does not exist.");
-        }
-
-        Booking booking = bookingOpt.get();
-        RestaurantTable newTable = tableOpt.get();
-
-        // Prevent moving to an already occupied table at the exact same time
-        boolean isOccupied = bookingRepository.existsByRestaurantTableIdAndBookingDateAndBookingTime(
-                newTable.getId(),
-                booking.getBookingDate(),
-                booking.getBookingTime()
-        );
-
-        if (isOccupied) {
-            return ResponseEntity.badRequest().body("Table " + newTable.getTableNumber() + " is already occupied at this date and time.");
-        }
-
-        booking.setRestaurantTable(newTable);
-        Booking updated = bookingRepository.save(booking);
-        return ResponseEntity.ok(updated);
     }
 }
