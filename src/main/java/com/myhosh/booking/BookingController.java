@@ -127,4 +127,20 @@ public class BookingController {
         Booking updated = bookingRepository.save(booking);
         return ResponseEntity.ok(updated);
     }
+    // --- 5. UPDATE BOOKING TIME (STAFF & ADMIN) ---
+    @PutMapping("/{id}/time")
+    public ResponseEntity<?> updateBookingTime(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        Optional<Booking> bookingOpt = bookingRepository.findById(id);
+        if (!bookingOpt.isPresent()) {
+            return ResponseEntity.notFound().build();
+        }
+        Booking booking = bookingOpt.get();
+        String newTime = body.get("bookingTime");
+        if (newTime == null || newTime.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body("Time cannot be empty.");
+        }
+        booking.setBookingTime(java.time.LocalTime.parse(newTime));
+        Booking updated = bookingRepository.save(booking);
+        return ResponseEntity.ok(updated);
+    }
 }
