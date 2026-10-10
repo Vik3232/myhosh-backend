@@ -2,6 +2,8 @@ package com.myhosh.booking;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
 
 import java.util.List;
 import java.util.Map;
@@ -16,20 +18,25 @@ public class BookingController {
     private final CustomerRepository customerRepository;
     private final RestaurantTableRepository tableRepository;
 
-    public BookingController(
-            BookingRepository bookingRepository,
-            CustomerRepository customerRepository,
-            RestaurantTableRepository tableRepository
-    ) {
-        this.bookingRepository = bookingRepository;
-        this.customerRepository = customerRepository;
-        this.tableRepository = tableRepository;
-    }
+    public class BookingController {
 
-    @GetMapping
-    public List<Booking> getAllBookings() {
-        return bookingRepository.findAll();
-    }
+        private final BookingRepository bookingRepository;
+        private final CustomerRepository customerRepository;
+        private final RestaurantTableRepository tableRepository;
+        private final JavaMailSender mailSender; // <-- ADD THIS
+
+        public BookingController(
+                BookingRepository bookingRepository,
+                CustomerRepository customerRepository,
+                RestaurantTableRepository tableRepository,
+                JavaMailSender mailSender // <-- ADD THIS
+        ) {
+            this.bookingRepository = bookingRepository;
+            this.customerRepository = customerRepository;
+            this.tableRepository = tableRepository;
+            this.mailSender = mailSender; // <-- ADD THIS
+        }
+
 
     @PostMapping
     public ResponseEntity<?> createBooking(@RequestBody Booking newBooking) {
