@@ -31,11 +31,13 @@ public class BookingController {
         this.mailSender = mailSender;
     }
 
+
     // --- 1. GET ALL BOOKINGS ---
     @GetMapping
     public java.util.List<Booking> getAllBookings() {
         return bookingRepository.findAll();
     }
+
 
     @PostMapping
     public ResponseEntity<?> createBooking(@RequestBody Booking newBooking) {
@@ -59,7 +61,7 @@ public class BookingController {
         if (savedBooking.getCustomer() != null && savedBooking.getCustomer().getEmail() != null) {
             try {
                 SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom("vis628385@gmail.com");
+                message.setFrom("vis628385@gmail.com"); // Must match application.properties
                 message.setTo(savedBooking.getCustomer().getEmail());
                 message.setSubject("Reservation Confirmed - MyHosh");
                 message.setText("Dear " + savedBooking.getCustomer().getFullName() + ",\n\n" +
@@ -71,6 +73,7 @@ public class BookingController {
                         "Best regards,\nMyHosh Management Team");
 
                 mailSender.send(message);
+                System.out.println("Confirmation email sent to " + savedBooking.getCustomer().getEmail());
             } catch (Exception e) {
                 System.err.println("Failed to send confirmation email: " + e.getMessage());
             }
@@ -78,6 +81,7 @@ public class BookingController {
 
         return ResponseEntity.ok(savedBooking);
     }
+
 
     // --- 1. DIRECT CANCEL BOOKING ENDPOINT ---
     @DeleteMapping("/{id}")
@@ -116,35 +120,28 @@ public class BookingController {
         Booking booking = bookingOpt.get();
         String reason = body.getOrDefault("reason", "Cancelled by management");
 
-        // Extract customer info before deleting
-        String customerEmail = booking.getCustomer() != null ? booking.getCustomer().getEmail() : null;
-        String customerName = booking.getCustomer() != null ? booking.getCustomer().getFullName() : "Guest";
-        String bookingDate = booking.getBookingDate() != null ? booking.getBookingDate().toString() : "";
-        String bookingTime = booking.getBookingTime() != null ? booking.getBookingTime().toString() : "";
-
-        // Delete booking first
-        bookingRepository.deleteById(id);
-
         // --- SEND CANCELLATION EMAIL ---
-        if (customerEmail != null) {
+        if (booking.getCustomer() != null && booking.getCustomer().getEmail() != null) {
             try {
                 SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom("vis628385@gmail.com");
-                message.setTo(customerEmail);
+                message.setFrom("vis628385@gmail.com"); // Must match application.properties
+                message.setTo(booking.getCustomer().getEmail());
                 message.setSubject("Reservation Cancellation - MyHosh");
-                message.setText("Dear " + customerName + ",\n\n" +
-                        "This email is to inform you that your reservation for " + bookingDate +
-                        " at " + bookingTime + " has been cancelled.\n\n" +
+                message.setText("Dear " + booking.getCustomer().getFullName() + ",\n\n" +
+                        "This email is to inform you that your reservation for " + booking.getBookingDate() +
+                        " at " + booking.getBookingTime() + " has been cancelled.\n\n" +
                         "Reason: " + reason + "\n\n" +
                         "If you have any questions or wish to rebook, please contact us.\n\n" +
                         "Best regards,\nMyHosh Management Team");
 
                 mailSender.send(message);
+                System.out.println("Cancellation email sent to " + booking.getCustomer().getEmail());
             } catch (Exception e) {
                 System.err.println("Failed to send cancellation email: " + e.getMessage());
             }
         }
 
+        bookingRepository.deleteById(id);
         return ResponseEntity.ok("Booking cancelled. Notification sent to customer.");
     }
 
@@ -164,6 +161,7 @@ public class BookingController {
         Booking booking = bookingOpt.get();
         RestaurantTable newTable = tableOpt.get();
 
+        // Prevent moving to an already occupied table at the exact same date & time
         boolean isOccupied = bookingRepository.existsByRestaurantTableIdAndBookingDateAndBookingTime(
                 newTable.getId(),
                 booking.getBookingDate(),
@@ -178,7 +176,6 @@ public class BookingController {
         Booking updated = bookingRepository.save(booking);
         return ResponseEntity.ok(updated);
     }
-
     // --- 5. UPDATE BOOKING TIME (STAFF & ADMIN) ---
     @PutMapping("/{id}/time")
     public ResponseEntity<?> updateBookingTime(@PathVariable Long id, @RequestBody Map<String, String> body) {
