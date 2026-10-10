@@ -57,26 +57,35 @@ public class BookingController {
 
         Booking savedBooking = bookingRepository.save(newBooking);
 
-        // --- SEND CONFIRMATION EMAIL ---
+        // --- SEND CONFIRMATION EMAIL (ASYNC BACKGROUND TASK) ---
         if (savedBooking.getCustomer() != null && savedBooking.getCustomer().getEmail() != null) {
-            try {
-                SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom("vis628385@gmail.com"); // Must match application.properties
-                message.setTo(savedBooking.getCustomer().getEmail());
-                message.setSubject("Reservation Confirmed - MyHosh");
-                message.setText("Dear " + savedBooking.getCustomer().getFullName() + ",\n\n" +
-                        "Your reservation at MyHosh is confirmed!\n\n" +
-                        "📅 Date: " + savedBooking.getBookingDate() + "\n" +
-                        "⏰ Time: " + savedBooking.getBookingTime() + "\n" +
-                        "👥 Party Size: " + savedBooking.getPartySize() + " Guests\n\n" +
-                        "We look forward to hosting you.\n\n" +
-                        "Best regards,\nMyHosh Management Team");
+            // Extract details before moving to background thread
+            String customerEmail = savedBooking.getCustomer().getEmail();
+            String customerName = savedBooking.getCustomer().getFullName();
+            String bookingDate = savedBooking.getBookingDate().toString();
+            String bookingTime = savedBooking.getBookingTime().toString();
+            Integer partySize = savedBooking.getPartySize();
 
-                mailSender.send(message);
-                System.out.println("Confirmation email sent to " + savedBooking.getCustomer().getEmail());
-            } catch (Exception e) {
-                System.err.println("Failed to send confirmation email: " + e.getMessage());
-            }
+            java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    SimpleMailMessage message = new SimpleMailMessage();
+                    message.setFrom("vis628385@gmail.com"); // Must match application.properties
+                    message.setTo(customerEmail);
+                    message.setSubject("Reservation Confirmed - MyHosh");
+                    message.setText("Dear " + customerName + ",\n\n" +
+                            "Your reservation at MyHosh is confirmed!\n\n" +
+                            "📅 Date: " + bookingDate + "\n" +
+                            "⏰ Time: " + bookingTime + "\n" +
+                            "👥 Party Size: " + partySize + " Guests\n\n" +
+                            "We look forward to hosting you.\n\n" +
+                            "Best regards,\nMyHosh Management Team");
+
+                    mailSender.send(message);
+                    System.out.println("Confirmation email sent to " + customerEmail);
+                } catch (Exception e) {
+                    System.err.println("Failed to send confirmation email: " + e.getMessage());
+                }
+            });
         }
 
         return ResponseEntity.ok(savedBooking);
@@ -120,25 +129,34 @@ public class BookingController {
         Booking booking = bookingOpt.get();
         String reason = body.getOrDefault("reason", "Cancelled by management");
 
-        // --- SEND CANCELLATION EMAIL ---
+        // --- SEND CANCELLATION EMAIL (ASYNC BACKGROUND TASK) ---
         if (booking.getCustomer() != null && booking.getCustomer().getEmail() != null) {
-            try {
-                SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom("vis628385@gmail.com"); // Must match application.properties
-                message.setTo(booking.getCustomer().getEmail());
-                message.setSubject("Reservation Cancellation - MyHosh");
-                message.setText("Dear " + booking.getCustomer().getFullName() + ",\n\n" +
-                        "This email is to inform you that your reservation for " + booking.getBookingDate() +
-                        " at " + booking.getBookingTime() + " has been cancelled.\n\n" +
-                        "Reason: " + reason + "\n\n" +
-                        "If you have any questions or wish to rebook, please contact us.\n\n" +
-                        "Best regards,\nMyHosh Management Team");
+            // Extract details before deleting the booking to prevent database errors
+            String customerEmail = booking.getCustomer().getEmail();
+            String customerName = booking.getCustomer().getFullName();
+            String bookingDate = booking.getBookingDate() != null ? booking.getBookingDate().toString() : "";
+            String bookingTime = booking.getBookingTime() != null ? booking.getBookingTime().toString() : "";
+            String finalReason = reason;
 
-                mailSender.send(message);
-                System.out.println("Cancellation email sent to " + booking.getCustomer().getEmail());
-            } catch (Exception e) {
-                System.err.println("Failed to send cancellation email: " + e.getMessage());
-            }
+            java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    SimpleMailMessage message = new SimpleMailMessage();
+                    message.setFrom("vis628385@gmail.com"); // Must match application.properties
+                    message.setTo(customerEmail);
+                    message.setSubject("Reservation Cancellation - MyHosh");
+                    message.setText("Dear " + customerName + ",\n\n" +
+                            "This email is to inform you that your reservation for " + bookingDate +
+                            " at " + bookingTime + " has been cancelled.\n\n" +
+                            "Reason: " + finalReason + "\n\n" +
+                            "If you have any questions or wish to rebook, please contact us.\n\n" +
+                            "Best regards,\nMyHosh Management Team");
+
+                    mailSender.send(message);
+                    System.out.println("Cancellation email sent to " + customerEmail);
+                } catch (Exception e) {
+                    System.err.println("Failed to send cancellation email: " + e.getMessage());
+                }
+            });
         }
 
         bookingRepository.deleteById(id);
