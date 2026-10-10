@@ -32,6 +32,11 @@ public class BookingController {
     }
 
 
+    // --- 1. GET ALL BOOKINGS ---
+    @GetMapping
+    public java.util.List<Booking> getAllBookings() {
+        return bookingRepository.findAll();
+    }
 
 
     @PostMapping
@@ -115,12 +120,29 @@ public class BookingController {
         Booking booking = bookingOpt.get();
         String reason = body.getOrDefault("reason", "Cancelled by management");
 
-        // Log notification trigger for customer
-        String customerName = (booking.getCustomer() != null) ? booking.getCustomer().getFullName() : "Guest";
-        System.out.println("ALERT: Booking cancelled for guest: " + customerName + " | Reason: " + reason);
+        // --- SEND CANCELLATION EMAIL ---
+        if (booking.getCustomer() != null && booking.getCustomer().getEmail() != null) {
+            try {
+                SimpleMailMessage message = new SimpleMailMessage();
+                message.setFrom("vis628385@gmail.com"); // Must match application.properties
+                message.setTo(booking.getCustomer().getEmail());
+                message.setSubject("Reservation Cancellation - MyHosh");
+                message.setText("Dear " + booking.getCustomer().getFullName() + ",\n\n" +
+                        "This email is to inform you that your reservation for " + booking.getBookingDate() +
+                        " at " + booking.getBookingTime() + " has been cancelled.\n\n" +
+                        "Reason: " + reason + "\n\n" +
+                        "If you have any questions or wish to rebook, please contact us.\n\n" +
+                        "Best regards,\nMyHosh Management Team");
+
+                mailSender.send(message);
+                System.out.println("Cancellation email sent to " + booking.getCustomer().getEmail());
+            } catch (Exception e) {
+                System.err.println("Failed to send cancellation email: " + e.getMessage());
+            }
+        }
 
         bookingRepository.deleteById(id);
-        return ResponseEntity.ok("Booking cancelled. Notification logged.");
+        return ResponseEntity.ok("Booking cancelled. Notification sent to customer.");
     }
 
     // --- 4. REASSIGN TABLE ENDPOINT ---
