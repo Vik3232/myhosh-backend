@@ -17,25 +17,21 @@ public class BookingController {
     private final BookingRepository bookingRepository;
     private final CustomerRepository customerRepository;
     private final RestaurantTableRepository tableRepository;
+    private final JavaMailSender mailSender;
 
-    public class BookingController {
+    public BookingController(
+            BookingRepository bookingRepository,
+            CustomerRepository customerRepository,
+            RestaurantTableRepository tableRepository,
+            JavaMailSender mailSender
+    ) {
+        this.bookingRepository = bookingRepository;
+        this.customerRepository = customerRepository;
+        this.tableRepository = tableRepository;
+        this.mailSender = mailSender;
+    }
 
-        private final BookingRepository bookingRepository;
-        private final CustomerRepository customerRepository;
-        private final RestaurantTableRepository tableRepository;
-        private final JavaMailSender mailSender; // <-- ADD THIS
 
-        public BookingController(
-                BookingRepository bookingRepository,
-                CustomerRepository customerRepository,
-                RestaurantTableRepository tableRepository,
-                JavaMailSender mailSender // <-- ADD THIS
-        ) {
-            this.bookingRepository = bookingRepository;
-            this.customerRepository = customerRepository;
-            this.tableRepository = tableRepository;
-            this.mailSender = mailSender; // <-- ADD THIS
-        }
 
 
     @PostMapping
