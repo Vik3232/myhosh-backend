@@ -51,8 +51,32 @@ public class BookingController {
         }
 
         Booking savedBooking = bookingRepository.save(newBooking);
+
+        // --- SEND CONFIRMATION EMAIL ---
+        if (savedBooking.getCustomer() != null && savedBooking.getCustomer().getEmail() != null) {
+            try {
+                SimpleMailMessage message = new SimpleMailMessage();
+                message.setFrom("vis628385@gmail.com"); // Must match application.properties
+                message.setTo(savedBooking.getCustomer().getEmail());
+                message.setSubject("Reservation Confirmed - MyHosh");
+                message.setText("Dear " + savedBooking.getCustomer().getFullName() + ",\n\n" +
+                        "Your reservation at MyHosh is confirmed!\n\n" +
+                        "📅 Date: " + savedBooking.getBookingDate() + "\n" +
+                        "⏰ Time: " + savedBooking.getBookingTime() + "\n" +
+                        "👥 Party Size: " + savedBooking.getPartySize() + " Guests\n\n" +
+                        "We look forward to hosting you.\n\n" +
+                        "Best regards,\nMyHosh Management Team");
+
+                mailSender.send(message);
+                System.out.println("Confirmation email sent to " + savedBooking.getCustomer().getEmail());
+            } catch (Exception e) {
+                System.err.println("Failed to send confirmation email: " + e.getMessage());
+            }
+        }
+
         return ResponseEntity.ok(savedBooking);
     }
+
 
     // --- 1. DIRECT CANCEL BOOKING ENDPOINT ---
     @DeleteMapping("/{id}")
