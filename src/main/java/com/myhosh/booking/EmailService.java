@@ -10,7 +10,7 @@ public class EmailService {
     private final JavaMailSender mailSender;
 
     // The email address you register with Brevo
-    private final String fromEmail = "vis628385@gmail.com";
+    private final String fromEmail = "MyHosh <vis628385@gmail.com>";
 
     public EmailService(JavaMailSender mailSender) {
         this.mailSender = mailSender;
