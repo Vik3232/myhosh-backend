@@ -3,7 +3,6 @@ package com.myhosh.booking;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -52,7 +51,7 @@ public class BookingController {
 
         Booking savedBooking = bookingRepository.save(newBooking);
 
-        // Call the new EmailService
+        // Send Email Confirmation
         if (savedBooking.getCustomer() != null && savedBooking.getCustomer().getEmail() != null) {
             emailService.sendConfirmationEmail(
                     savedBooking.getCustomer().getEmail(),
@@ -107,7 +106,7 @@ public class BookingController {
 
         bookingRepository.deleteById(id);
 
-        // Call the new EmailService
+        // Send Cancellation Email
         if (customerEmail != null && !customerEmail.isEmpty()) {
             emailService.sendCancellationEmail(customerEmail, customerName, bookingDate, bookingTime, reason);
         }
