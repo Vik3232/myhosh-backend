@@ -73,6 +73,36 @@ public class BookingController {
         bookingRepository.deleteById(id);
         return ResponseEntity.ok("Booking cancelled successfully.");
     }
+    // 1. DASHBOARD: Get only today's bookings
+    @GetMapping("/today")
+    public java.util.List<Booking> getTodaysBookings() {
+        return bookingRepository.findByBookingDateOrderByBookingTimeAsc(java.time.LocalDate.now());
+    }
+
+    // 2. HISTORY: Get all past bookings (yesterday and older)
+    @GetMapping("/history")
+    public java.util.List<Booking> getHistoricalBookings() {
+        return bookingRepository.findByBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(java.time.LocalDate.now());
+    }
+
+    // 3. STATUS TRACKER: Mark a customer as "Arrived" or "No Show"
+    @PutMapping("/{id}/status")
+    public ResponseEntity<?> updateBookingStatus(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        Optional<Booking> bookingOpt = bookingRepository.findById(id);
+        if (!bookingOpt.isPresent()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Booking booking = bookingOpt.get();
+        String newStatus = body.get("status"); // e.g., "ARRIVED"
+
+        if (newStatus != null && !newStatus.trim().isEmpty()) {
+            booking.setStatus(newStatus.toUpperCase());
+        }
+
+        Booking updated = bookingRepository.save(booking);
+        return ResponseEntity.ok(updated);
+    }
 
     @PutMapping("/{id}/notes")
     public ResponseEntity<?> updateNotes(@PathVariable Long id, @RequestBody Map<String, String> body) {

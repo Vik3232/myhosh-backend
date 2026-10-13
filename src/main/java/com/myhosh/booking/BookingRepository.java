@@ -2,10 +2,15 @@ package com.myhosh.booking;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import java.time.LocalDate;
-import java.time.LocalTime;
+import java.util.List;
 
 public interface BookingRepository extends JpaRepository<Booking, Long> {
 
-    // Spring Boot reads this method name and automatically creates a SQL check!
-    boolean existsByRestaurantTableIdAndBookingDateAndBookingTime(Long tableId, LocalDate date, LocalTime time);
+    boolean existsByRestaurantTableIdAndBookingDateAndBookingTime(Long tableId, LocalDate date, java.time.LocalTime time);
+
+    // Get only bookings for a specific day (e.g., Today)
+    List<Booking> findByBookingDateOrderByBookingTimeAsc(LocalDate date);
+
+    // Get all old bookings (History)
+    List<Booking> findByBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(LocalDate date);
 }
