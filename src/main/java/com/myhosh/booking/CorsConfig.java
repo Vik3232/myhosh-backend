@@ -14,10 +14,11 @@ public class CorsConfig {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
                 registry.addMapping("/**")
-                        // M4 Lockdown: Only allow your Vercel frontend, local dev, and official domain
                         .allowedOriginPatterns(
                                 "http://localhost:*",
                                 "https://*.vercel.app",
+                                "https://myhosh-salisbury.co.uk",
+                                "https://*.myhosh-salisbury.co.uk",
                                 "https://myhosh.co.uk",
                                 "https://*.myhosh.co.uk"
                         )
