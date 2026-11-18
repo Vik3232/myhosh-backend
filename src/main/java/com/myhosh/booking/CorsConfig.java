@@ -1,4 +1,4 @@
-package com.myhosh.booking; // Adjust if your package name is different
+package com.myhosh.booking;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,10 +13,18 @@ public class CorsConfig {
         return new WebMvcConfigurer() {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
-                registry.addMapping("/**") // Applies to all /api endpoints
-                        .allowedOrigins("*") // Allows your Vercel frontend
+                registry.addMapping("/**")
+                        // M4 Lockdown: Only allow your Vercel frontend, local dev, and official domain
+                        .allowedOriginPatterns(
+                                "http://localhost:*",
+                                "https://*.vercel.app",
+                                "https://myhosh.co.uk",
+                                "https://*.myhosh.co.uk"
+                        )
                         .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                        .allowedHeaders("*");
+                        .allowedHeaders("Content-Type", "X-Staff-Token", "Accept", "Origin", "Authorization")
+                        .exposedHeaders("Retry-After")
+                        .maxAge(3600);
             }
         };
     }
