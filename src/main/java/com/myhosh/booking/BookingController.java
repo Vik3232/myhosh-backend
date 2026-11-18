@@ -170,17 +170,16 @@ public class BookingController {
             Booking savedBooking = bookingRepository.save(newBooking);
 
             // Send Email Confirmation (skip internal walk-in/staff placeholder emails)
-            if (savedBooking.getCustomer() != null && savedBooking.getCustomer().getEmail() != null) {
-                String guestEmail = savedBooking.getCustomer().getEmail().trim();
-                if (!guestEmail.isEmpty() && !guestEmail.endsWith("@myhosh.local")) {
-                    emailService.sendConfirmationEmail(
-                            guestEmail,
-                            savedBooking.getCustomer().getFullName(),
-                            savedBooking.getBookingDate().toString(),
-                            savedBooking.getBookingTime().toString(),
-                            savedBooking.getPartySize()
-                    );
-                }
+            if (savedBooking.getCustomer().getEmail() != null) {
+                emailService.sendConfirmationEmail(
+                        savedBooking.getCustomer().getEmail(),
+                        savedBooking.getCustomer().getFullName(),
+                        savedBooking.getBookingDate().toString(),
+                        savedBooking.getBookingTime().toString(),
+                        savedBooking.getPartySize(),
+                        savedBooking.getId()
+                );
+            }
             }
 
             return ResponseEntity.ok(savedBooking);
