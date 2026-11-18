@@ -1,5 +1,6 @@
 package com.myhosh.booking;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 
 @Entity
@@ -13,16 +14,20 @@ public class StaffMember {
     @Column(unique = true, nullable = false)
     private String username;
 
+    // WRITE_ONLY allows JSON login/registration payloads to be read,
+    // but NEVER serializes the password hash back out to the browser.
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(nullable = false)
-    private String password; // We will upgrade to encrypted hashes next
+    private String password;
 
     @Column(nullable = false)
-    private String role; // e.g., "ADMIN" or "STAFF"
+    private String role; // "ADMIN" or "STAFF"
 
-    // Default constructor
+    @Transient
+    private String token; // Sent to frontend upon login without altering DB schema
+
     public StaffMember() {}
 
-    // Getters and Setters
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -34,4 +39,7 @@ public class StaffMember {
 
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }
+
+    public String getToken() { return token; }
+    public void setToken(String token) { this.token = token; }
 }
