@@ -3,11 +3,13 @@ package com.myhosh.booking;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -15,6 +17,8 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/bookings")
 public class BookingController {
+
+    private static final ZoneId LONDON_ZONE = ZoneId.of("Europe/London");
 
     private final BookingRepository bookingRepository;
     private final CustomerRepository customerRepository;
@@ -42,14 +46,11 @@ public class BookingController {
     @Scheduled(initialDelay = 30000, fixedRate = 86400000)
     public void purgeExpiredGdprBookings() {
         try {
-            LocalDate cutoffDate = LocalDate.now().minusMonths(6);
-            List<Booking> expiredBookings = bookingRepository.findAll().stream()
-                    .filter(b -> b.getBookingDate() != null && b.getBookingDate().isBefore(cutoffDate))
-                    .toList();
+            LocalDate cutoffDate = LocalDate.now(LONDON_ZONE).minusMonths(6);
+            int deletedCount = bookingRepository.deleteExpiredBookingsBefore(cutoffDate);
 
-            if (!expiredBookings.isEmpty()) {
-                bookingRepository.deleteAll(expiredBookings);
-                System.out.println("🔒 [UK GDPR Auto-Purge] Deleted " + expiredBookings.size()
+            if (deletedCount > 0) {
+                System.out.println("🔒 [UK GDPR Auto-Purge] Deleted " + deletedCount
                         + " reservations older than 6 months (before " + cutoffDate + ").");
             } else {
                 System.out.println("🔒 [UK GDPR Auto-Purge] Checked retention policy: 0 bookings older than " + cutoffDate + ".");
@@ -82,16 +83,13 @@ public class BookingController {
     // 1. GET ACTIVE & UPCOMING BOOKINGS (Full PII for Staff, Scrubbed for Public Availability Check)
     @GetMapping
     public List<Booking> getAllBookings(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
-        LocalDate today = LocalDate.now();
-        List<Booking> upcoming = bookingRepository.findAll().stream()
-                .filter(b -> b.getBookingDate() != null && !b.getBookingDate().isBefore(today))
-                .toList();
+        LocalDate today = LocalDate.now(LONDON_ZONE);
 
         if (staffController.isValidStaffToken(token)) {
-            return upcoming;
+            return bookingRepository.findByBookingDateGreaterThanEqualOrderByBookingDateAscBookingTimeAsc(today);
         }
-        return upcoming.stream()
-                .filter(b -> !"NO_SHOW".equalsIgnoreCase(b.getStatus()))
+
+        return bookingRepository.findPublicUpcomingBookings(today).stream()
                 .map(this::maskPublicBooking)
                 .toList();
     }
@@ -103,10 +101,8 @@ public class BookingController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body("Unauthorized: Staff authentication required.");
         }
-        LocalDate today = LocalDate.now();
-        List<Booking> history = bookingRepository.findAll().stream()
-                .filter(b -> b.getBookingDate() != null && b.getBookingDate().isBefore(today))
-                .toList();
+        LocalDate today = LocalDate.now(LONDON_ZONE);
+        List<Booking> history = bookingRepository.findByBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(today);
         return ResponseEntity.ok(history);
     }
 
@@ -117,10 +113,8 @@ public class BookingController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body("Unauthorized: Staff authentication required.");
         }
-        LocalDate today = LocalDate.now();
-        List<Booking> todays = bookingRepository.findAll().stream()
-                .filter(b -> today.equals(b.getBookingDate()))
-                .toList();
+        LocalDate today = LocalDate.now(LONDON_ZONE);
+        List<Booking> todays = bookingRepository.findByBookingDateOrderByBookingTimeAsc(today);
         return ResponseEntity.ok(todays);
     }
 
@@ -169,7 +163,7 @@ public class BookingController {
 
         // Enforce Customer-Facing Table Yield Rules (Staff can override via Staff Modal)
         if (!isStaffRequest) {
-            if (booking.getBookingDate().isBefore(LocalDate.now())) {
+            if (booking.getBookingDate().isBefore(LocalDate.now(LONDON_ZONE))) {
                 return ResponseEntity.badRequest().body("Cannot book a date in the past.");
             }
             if (guests < 1 || guests > 20) {
@@ -192,10 +186,7 @@ public class BookingController {
         // Synchronized Critical Section: Prevent Double-Bookings & Phone Spam
         Booking savedBooking;
         synchronized (bookingLock) {
-            List<Booking> sameDayBookings = bookingRepository.findAll().stream()
-                    .filter(b -> booking.getBookingDate().equals(b.getBookingDate()))
-                    .filter(b -> !"NO_SHOW".equalsIgnoreCase(b.getStatus()))
-                    .toList();
+            List<Booking> sameDayBookings = bookingRepository.findActiveBookingsByDate(booking.getBookingDate());
 
             // Check 120-minute sitting overlap on the requested table
             boolean tableConflict = sameDayBookings.stream()
@@ -251,6 +242,7 @@ public class BookingController {
 
     // 5. UPDATE BOOKING STATUS (ARRIVED / NO_SHOW) - STAFF ONLY
     @PutMapping("/{id}/status")
+    @Transactional
     public ResponseEntity<?> updateBookingStatus(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
             @PathVariable Long id,
@@ -269,6 +261,7 @@ public class BookingController {
 
     // 6. UPDATE STAFF INTERNAL NOTES - STAFF ONLY
     @PutMapping("/{id}/notes")
+    @Transactional
     public ResponseEntity<?> updateStaffNotes(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
             @PathVariable Long id,
@@ -287,6 +280,7 @@ public class BookingController {
 
     // 7. CHANGE SITTING TIME - STAFF ONLY
     @PutMapping("/{id}/time")
+    @Transactional
     public ResponseEntity<?> updateBookingTime(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
             @PathVariable Long id,
@@ -311,6 +305,7 @@ public class BookingController {
 
     // 8. REASSIGN TABLE - STAFF ONLY (Checks 2-Hour Sitting Conflict)
     @PutMapping("/{id}/table/{tableId}")
+    @Transactional
     public ResponseEntity<?> reassignTable(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
             @PathVariable Long id,
@@ -329,10 +324,8 @@ public class BookingController {
         Booking booking = bookingOpt.get();
         RestaurantTable newTable = tableOpt.get();
 
-        boolean conflict = bookingRepository.findAll().stream()
+        boolean conflict = bookingRepository.findActiveBookingsByDate(booking.getBookingDate()).stream()
                 .filter(b -> !b.getId().equals(booking.getId()))
-                .filter(b -> booking.getBookingDate().equals(b.getBookingDate()))
-                .filter(b -> !"NO_SHOW".equalsIgnoreCase(b.getStatus()))
                 .filter(b -> b.getRestaurantTable() != null && newTable.getId().equals(b.getRestaurantTable().getId()))
                 .anyMatch(b -> isRangesOverlap(booking.getBookingTime(), b.getBookingTime()));
 

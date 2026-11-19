@@ -6,20 +6,26 @@ import java.time.LocalTime;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "bookings")
+@Table(
+        name = "bookings",
+        indexes = {
+                @Index(name = "idx_bookings_booking_date", columnList = "booking_date"),
+                @Index(name = "idx_bookings_date_table", columnList = "booking_date, table_id")
+        }
+)
 public class Booking {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // This links the booking to the Customer table using the customer_id column
-    @ManyToOne
+    // LAZY prevents Hibernate from firing secret N+1 queries unless explicitly joined via @EntityGraph
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")
     private Customer customer;
 
-    // This links the booking to the Restaurant Tables table using the table_id column
-    @ManyToOne
+    // LAZY prevents Hibernate from firing secret N+1 queries unless explicitly joined via @EntityGraph
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "table_id")
     private RestaurantTable restaurantTable;
 
@@ -34,9 +40,7 @@ public class Booking {
     @Column(name = "created_at", insertable = false, updatable = false)
     private LocalDateTime createdAt;
 
-
     // --- GETTERS AND SETTERS ---
-
 
     public Long getId() {
         return id;
