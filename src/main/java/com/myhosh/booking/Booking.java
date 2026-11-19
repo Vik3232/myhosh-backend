@@ -19,12 +19,10 @@ public class Booking {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // LAZY prevents Hibernate from firing secret N+1 queries unless explicitly joined via @EntityGraph
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")
     private Customer customer;
 
-    // LAZY prevents Hibernate from firing secret N+1 queries unless explicitly joined via @EntityGraph
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "table_id")
     private RestaurantTable restaurantTable;
@@ -33,14 +31,17 @@ public class Booking {
     private LocalTime bookingTime;
     private Integer partySize;
     private String specialRequests;
+
     @Column(length = 1000)
     private String staffNotes;
+
     private String status = "CONFIRMED";
+
+    @Column(name = "idempotency_key", unique = true, length = 64)
+    private String idempotencyKey;
 
     @Column(name = "created_at", insertable = false, updatable = false)
     private LocalDateTime createdAt;
-
-    // --- GETTERS AND SETTERS ---
 
     public Long getId() {
         return id;
@@ -104,6 +105,14 @@ public class Booking {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
     }
 
     public LocalDateTime getCreatedAt() {

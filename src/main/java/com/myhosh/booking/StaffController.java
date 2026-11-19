@@ -8,9 +8,9 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-
 
 @RestController
 @RequestMapping("/api/staff")
@@ -18,9 +18,8 @@ public class StaffController {
 
     private final StaffMemberRepository staffRepository;
 
-    // Thread-safe active session store: token -> StaffSession
     private static final Map<String, StaffSession> ACTIVE_TOKENS = new ConcurrentHashMap<>();
-    private static final long TOKEN_TTL_MS = 12 * 60 * 60 * 1000L; // 12-hour shift expiry
+    private static final long TOKEN_TTL_MS = 12 * 60 * 60 * 1000L;
 
     private static class StaffSession {
         final String username;
@@ -38,7 +37,6 @@ public class StaffController {
         this.staffRepository = staffRepository;
     }
 
-    // --- ZERO-TRUST TOKEN HELPERS (Used by BookingController & StaffController) ---
     public static boolean isValidStaffToken(String token) {
         if (token == null || token.trim().isEmpty()) return false;
         StaffSession session = ACTIVE_TOKENS.get(token.trim());
@@ -62,7 +60,24 @@ public class StaffController {
         }
     }
 
-    // --- BUILT-IN SALTED SHA-256 PASSWORD HASHING (No pom.xml changes needed) ---
+    public static void revokeTokensForUsername(String username) {
+        if (username == null) return;
+        String target = username.trim();
+        ACTIVE_TOKENS.entrySet().removeIf(entry -> target.equalsIgnoreCase(entry.getValue().username));
+    }
+
+    public static String getSessionUsername(String token) {
+        if (!isValidStaffToken(token)) return "UNKNOWN";
+        StaffSession session = ACTIVE_TOKENS.get(token.trim());
+        return session != null ? session.username : "UNKNOWN";
+    }
+
+    public static String getSessionRole(String token) {
+        if (!isValidStaffToken(token)) return "NONE";
+        StaffSession session = ACTIVE_TOKENS.get(token.trim());
+        return session != null ? session.role : "NONE";
+    }
+
     private String hashPassword(String rawPassword, String salt) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -93,16 +108,15 @@ public class StaffController {
             }
             return false;
         }
-        // Legacy fallback for existing plain-text accounts in DB
         return storedPassword.equals(rawPassword);
     }
 
-    // 1. Register a New Staff Member (Strictly ADMIN-Only unless bootstrapping first user)
+    // 1. Register a New Staff Member (ADMIN-Only unless bootstrapping first user)
     @PostMapping("/register")
     public ResponseEntity<?> registerStaff(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
-            @RequestBody StaffMember newStaff
-    ) {
+            @RequestBody StaffMember newStaff) {
+
         long existingStaffCount = staffRepository.count();
         if (existingStaffCount > 0 && !isAdminToken(token)) {
             return ResponseEntity.status(403).body("Forbidden: Only an authenticated ADMIN can register new staff.");
@@ -125,7 +139,6 @@ public class StaffController {
             newStaff.setRole(newStaff.getRole().trim().toUpperCase());
         }
 
-        // Hash password before saving to Neon PostgreSQL
         String salt = generateSalt();
         newStaff.setPassword(hashPassword(newStaff.getPassword(), salt));
 
@@ -146,7 +159,6 @@ public class StaffController {
         StaffMember staff = staffRepository.findByUsername(username.trim());
 
         if (staff != null && verifyPassword(password, staff.getPassword())) {
-            // Transparently upgrade legacy plain-text password to salted SHA-256 hash on login
             if (!staff.getPassword().startsWith("SHA256$")) {
                 String salt = generateSalt();
                 staff.setPassword(hashPassword(password, salt));
@@ -167,10 +179,55 @@ public class StaffController {
         }
     }
 
-    // 3. Explicit Logout Endpoint to Revoke Server Token
+    // 3. Explicit Logout Endpoint
     @PostMapping("/logout")
     public ResponseEntity<?> logoutStaff(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
         revokeToken(token);
         return ResponseEntity.ok("Logged out securely.");
+    }
+
+    // 4. ADMIN ONLY: List all staff accounts
+    @GetMapping
+    public ResponseEntity<?> listStaff(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
+        if (!isAdminToken(token)) {
+            return ResponseEntity.status(403).body("Forbidden: ADMIN access required.");
+        }
+        return ResponseEntity.ok(staffRepository.findAll());
+    }
+
+    // 5. ADMIN ONLY: Delete a staff account & immediately revoke active sessions
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteStaff(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token,
+            @PathVariable Long id) {
+
+        if (!isAdminToken(token)) {
+            return ResponseEntity.status(403).body("Forbidden: ADMIN access required.");
+        }
+
+        Optional<StaffMember> targetOpt = staffRepository.findById(id);
+        if (targetOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        StaffMember target = targetOpt.get();
+        String callerUsername = getSessionUsername(token);
+
+        if (target.getUsername() != null && target.getUsername().equalsIgnoreCase(callerUsername)) {
+            return ResponseEntity.badRequest().body("You cannot delete your own active admin account.");
+        }
+
+        if ("ADMIN".equalsIgnoreCase(target.getRole())) {
+            long adminCount = staffRepository.findAll().stream()
+                    .filter(s -> "ADMIN".equalsIgnoreCase(s.getRole()))
+                    .count();
+            if (adminCount <= 1) {
+                return ResponseEntity.badRequest().body("Cannot delete the last remaining ADMIN account.");
+            }
+        }
+
+        revokeTokensForUsername(target.getUsername());
+        staffRepository.deleteById(id);
+        return ResponseEntity.ok("Staff account removed and active sessions revoked.");
     }
 }
