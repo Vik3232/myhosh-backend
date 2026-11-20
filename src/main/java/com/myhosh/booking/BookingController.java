@@ -44,25 +44,17 @@ public class BookingController {
         this.gdprAuditLogRepository = gdprAuditLogRepository;
     }
 
-    // --- PHASE 3: UK GDPR 6-MONTH AUTOMATIC DATA RETENTION PURGE ---
     @Scheduled(initialDelay = 30000, fixedRate = 86400000)
     public void purgeExpiredGdprBookings() {
         try {
             LocalDate cutoffDate = LocalDate.now(LONDON_ZONE).minusMonths(6);
             int deletedCount = bookingRepository.deleteExpiredBookingsBefore(cutoffDate);
-
-            if (deletedCount > 0) {
-                System.out.println("🔒 [UK GDPR Auto-Purge] Deleted " + deletedCount
-                        + " reservations older than 6 months (before " + cutoffDate + ").");
-            } else {
-                System.out.println("🔒 [UK GDPR Auto-Purge] Checked retention policy: 0 bookings older than " + cutoffDate + ".");
-            }
+            System.out.println("🔒 [UK GDPR Auto-Purge] Deleted " + deletedCount + " reservations before " + cutoffDate + ".");
         } catch (Exception e) {
             System.err.println("⚠️ [UK GDPR Auto-Purge] Error during scheduled cleanup: " + e.getMessage());
         }
     }
 
-    // --- M3 GDPR PRIVACY HELPER: Scrub Customer PII for Unauthenticated Public Requests ---
     private Booking maskPublicBooking(Booking b) {
         Booking masked = new Booking();
         masked.setId(b.getId());
@@ -81,45 +73,35 @@ public class BookingController {
         return start1.isBefore(end2) && end1.isAfter(start2);
     }
 
-    // 1. GET ACTIVE & UPCOMING BOOKINGS
     @GetMapping
     public List<Booking> getAllBookings(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
         LocalDate today = LocalDate.now(LONDON_ZONE);
-
         if (StaffController.isValidStaffToken(token)) {
             return bookingRepository.findByBookingDateGreaterThanEqualOrderByBookingDateAscBookingTimeAsc(today);
         }
-
         return bookingRepository.findPublicUpcomingBookings(today).stream()
                 .map(this::maskPublicBooking)
                 .toList();
     }
 
-    // 2. GET PAST BOOKING HISTORY (STAFF ONLY)
     @GetMapping("/history")
     public ResponseEntity<?> getBookingHistory(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
         if (!StaffController.isValidStaffToken(token)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body("Unauthorized: Staff authentication required.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized: Staff authentication required.");
         }
         LocalDate today = LocalDate.now(LONDON_ZONE);
-        List<Booking> history = bookingRepository.findByBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(today);
-        return ResponseEntity.ok(history);
+        return ResponseEntity.ok(bookingRepository.findByBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(today));
     }
 
-    // 3. GET TODAY'S BOOKINGS (STAFF ONLY)
     @GetMapping("/today")
     public ResponseEntity<?> getTodaysBookings(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
         if (!StaffController.isValidStaffToken(token)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body("Unauthorized: Staff authentication required.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized: Staff authentication required.");
         }
         LocalDate today = LocalDate.now(LONDON_ZONE);
-        List<Booking> todays = bookingRepository.findByBookingDateOrderByBookingTimeAsc(today);
-        return ResponseEntity.ok(todays);
+        return ResponseEntity.ok(bookingRepository.findByBookingDateOrderByBookingTimeAsc(today));
     }
 
-    // 4. CREATE A NEW BOOKING (Public Customer OR Authenticated Staff Override)
     @PostMapping
     public ResponseEntity<?> createBooking(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
@@ -133,9 +115,6 @@ public class BookingController {
         if (booking.getCustomer() == null || booking.getCustomer().getFullName() == null
                 || booking.getCustomer().getFullName().isBlank()) {
             return ResponseEntity.badRequest().body("Guest name is required.");
-        }
-        if (booking.getRestaurantTable() == null || booking.getRestaurantTable().getId() == null) {
-            return ResponseEntity.badRequest().body("A valid table selection is required.");
         }
 
         DayOfWeek day = booking.getBookingDate().getDayOfWeek();
@@ -153,29 +132,33 @@ public class BookingController {
                     .body("Reservations for this day must be between " + minTime + " and " + maxTime + ".");
         }
 
-        Optional<RestaurantTable> tableOpt = tableRepository.findById(booking.getRestaurantTable().getId());
-        if (tableOpt.isEmpty()) {
-            return ResponseEntity.badRequest().body("Selected table does not exist.");
+        // Staff may leave table null for Custom Tables or "Table Not Sure Yet" (unlimited)
+        RestaurantTable targetTable = null;
+        if (booking.getRestaurantTable() != null && booking.getRestaurantTable().getId() != null) {
+            Optional<RestaurantTable> tableOpt = tableRepository.findById(booking.getRestaurantTable().getId());
+            if (tableOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body("Selected table does not exist.");
+            }
+            targetTable = tableOpt.get();
+        } else if (!isStaffRequest) {
+            return ResponseEntity.badRequest().body("A valid table selection is required.");
         }
-        RestaurantTable targetTable = tableOpt.get();
-        int tableNum = targetTable.getTableNumber();
+
         int guests = booking.getPartySize() != null ? booking.getPartySize() : 0;
 
         if (!isStaffRequest) {
+            int tableNum = targetTable.getTableNumber();
             if (booking.getBookingDate().isBefore(LocalDate.now(LONDON_ZONE))) {
                 return ResponseEntity.badRequest().body("Cannot book a date in the past.");
             }
             if (guests < 1 || guests > 20) {
                 return ResponseEntity.badRequest().body("Online bookings are limited to 1-20 guests.");
             }
-            if (tableNum == 4) {
-                return ResponseEntity.badRequest().body("Table 4 is not available for online reservations.");
-            }
             if (guests < 4 && (tableNum == 1 || tableNum == 5)) {
                 return ResponseEntity.badRequest().body("Window Tables 1 and 5 require 4 or more guests.");
             }
-            if (guests == 1 && tableNum != 8 && tableNum != 9 && tableNum != 10) {
-                return ResponseEntity.badRequest().body("Solo dining reservations are allocated to Tables 8, 9, or 10.");
+            if (guests == 1 && tableNum != 8 && tableNum != 9 && tableNum != 10 && tableNum != 4) {
+                return ResponseEntity.badRequest().body("Solo dining reservations are allocated to Tables 8, 9, 10 (or Table 4 when busy).");
             }
             if (targetTable.getCapacity() < guests) {
                 return ResponseEntity.badRequest().body("Selected table cannot accommodate this party size.");
@@ -188,6 +171,7 @@ public class BookingController {
         booking.setIdempotencyKey(cleanIdempotencyKey);
 
         Booking savedBooking;
+        final RestaurantTable lockedTable = targetTable;
         synchronized (bookingLock) {
             if (cleanIdempotencyKey != null) {
                 Optional<Booking> existingBooking = bookingRepository.findByIdempotencyKey(cleanIdempotencyKey);
@@ -198,14 +182,17 @@ public class BookingController {
 
             List<Booking> sameDayBookings = bookingRepository.findActiveBookingsByDate(booking.getBookingDate());
 
-            boolean tableConflict = sameDayBookings.stream()
-                    .filter(b -> b.getRestaurantTable() != null
-                            && targetTable.getId().equals(b.getRestaurantTable().getId()))
-                    .anyMatch(b -> isRangesOverlap(booking.getBookingTime(), b.getBookingTime()));
+            // Only enforce 2-hour overlap check when assigned to a numbered Table 1-13
+            if (lockedTable != null) {
+                boolean tableConflict = sameDayBookings.stream()
+                        .filter(b -> b.getRestaurantTable() != null
+                                && lockedTable.getId().equals(b.getRestaurantTable().getId()))
+                        .anyMatch(b -> isRangesOverlap(booking.getBookingTime(), b.getBookingTime()));
 
-            if (tableConflict) {
-                return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body("This table is already reserved within this 2-hour sitting window.");
+                if (tableConflict) {
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body("This table is already reserved within this 2-hour sitting window.");
+                }
             }
 
             if (!isStaffRequest && booking.getCustomer().getPhone() != null) {
@@ -224,7 +211,7 @@ public class BookingController {
 
             Customer savedCustomer = customerRepository.save(booking.getCustomer());
             booking.setCustomer(savedCustomer);
-            booking.setRestaurantTable(targetTable);
+            booking.setRestaurantTable(lockedTable);
 
             if (!isStaffRequest || booking.getStatus() == null || booking.getStatus().isBlank()) {
                 booking.setStatus("CONFIRMED");
@@ -247,7 +234,6 @@ public class BookingController {
         return ResponseEntity.ok(savedBooking);
     }
 
-    // 5. UPDATE BOOKING STATUS - STAFF ONLY
     @PutMapping("/{id}/status")
     @Transactional
     public ResponseEntity<?> updateBookingStatus(
@@ -266,7 +252,6 @@ public class BookingController {
         return ResponseEntity.ok(bookingRepository.save(booking));
     }
 
-    // 6. UPDATE STAFF INTERNAL NOTES - STAFF ONLY
     @PutMapping("/{id}/notes")
     @Transactional
     public ResponseEntity<?> updateStaffNotes(
@@ -285,7 +270,6 @@ public class BookingController {
         return ResponseEntity.ok(bookingRepository.save(booking));
     }
 
-    // 7. CHANGE SITTING TIME - STAFF ONLY
     @PutMapping("/{id}/time")
     @Transactional
     public ResponseEntity<?> updateBookingTime(
@@ -310,7 +294,6 @@ public class BookingController {
         return ResponseEntity.ok(bookingRepository.save(booking));
     }
 
-    // 8. REASSIGN TABLE - STAFF ONLY
     @PutMapping("/{id}/table/{tableId}")
     @Transactional
     public ResponseEntity<?> reassignTable(
@@ -322,13 +305,23 @@ public class BookingController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
         }
         Optional<Booking> bookingOpt = bookingRepository.findById(id);
-        Optional<RestaurantTable> tableOpt = tableRepository.findById(tableId);
-
-        if (bookingOpt.isEmpty() || tableOpt.isEmpty()) {
-            return ResponseEntity.badRequest().body("Booking or Table not found.");
+        if (bookingOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body("Booking not found.");
         }
 
         Booking booking = bookingOpt.get();
+
+        // tableId = 0 moves booking to Custom / Table Not Sure Yet (no conflict check)
+        if (tableId == 0L) {
+            booking.setRestaurantTable(null);
+            return ResponseEntity.ok(bookingRepository.save(booking));
+        }
+
+        Optional<RestaurantTable> tableOpt = tableRepository.findById(tableId);
+        if (tableOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body("Table not found.");
+        }
+
         RestaurantTable newTable = tableOpt.get();
 
         boolean conflict = bookingRepository.findActiveBookingsByDate(booking.getBookingDate()).stream()
@@ -345,7 +338,6 @@ public class BookingController {
         return ResponseEntity.ok(bookingRepository.save(booking));
     }
 
-    // 9. CANCEL BOOKING & NOTIFY GUEST - STAFF ONLY
     @PostMapping("/{id}/cancel")
     public ResponseEntity<?> cancelBooking(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
@@ -375,7 +367,6 @@ public class BookingController {
         return ResponseEntity.ok("Cancelled");
     }
 
-    // 10. PERMANENTLY DELETE CUSTOMER DATA FOR A BOOKING - STAFF OR ADMIN ONLY
     @DeleteMapping("/{id}/customer-data")
     @Transactional
     public ResponseEntity<?> deleteCustomerData(

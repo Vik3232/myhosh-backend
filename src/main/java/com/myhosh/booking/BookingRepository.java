@@ -32,11 +32,11 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     List<Booking> findByBookingDateGreaterThanEqualOrderByBookingDateAscBookingTimeAsc(LocalDate date);
 
     @EntityGraph(attributePaths = {"restaurantTable"})
-    @Query("SELECT b FROM Booking b WHERE b.bookingDate >= :today AND (b.status IS NULL OR UPPER(b.status) <> 'NO_SHOW') ORDER BY b.bookingDate ASC, b.bookingTime ASC")
+    @Query("SELECT b FROM Booking b WHERE b.bookingDate >= :today AND (b.status IS NULL OR UPPER(b.status) NOT IN ('NO_SHOW', 'COMPLETED', 'CANCELLED')) ORDER BY b.bookingDate ASC, b.bookingTime ASC")
     List<Booking> findPublicUpcomingBookings(@Param("today") LocalDate today);
 
     @EntityGraph(attributePaths = {"customer", "restaurantTable"})
-    @Query("SELECT b FROM Booking b WHERE b.bookingDate = :date AND (b.status IS NULL OR UPPER(b.status) <> 'NO_SHOW') ORDER BY b.bookingTime ASC")
+    @Query("SELECT b FROM Booking b WHERE b.bookingDate = :date AND (b.status IS NULL OR UPPER(b.status) NOT IN ('NO_SHOW', 'COMPLETED', 'CANCELLED')) ORDER BY b.bookingTime ASC")
     List<Booking> findActiveBookingsByDate(@Param("date") LocalDate date);
 
     @EntityGraph(attributePaths = {"customer", "restaurantTable"})
