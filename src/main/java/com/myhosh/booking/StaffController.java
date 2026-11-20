@@ -1,5 +1,6 @@
 package com.myhosh.booking;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,8 +19,21 @@ public class StaffController {
 
     private final StaffMemberRepository staffRepository;
 
+    @Value("${STAFF_GATE_PIN:}")
+    private String staffGatePin;
+
     private static final Map<String, StaffSession> ACTIVE_TOKENS = new ConcurrentHashMap<>();
     private static final long TOKEN_TTL_MS = 12 * 60 * 60 * 1000L;
+
+    // Brute-force protection: max 5 failed logins per 15 minutes
+    private static final Map<String, LoginAttempt> FAILED_LOGINS = new ConcurrentHashMap<>();
+    private static final int MAX_FAILED_ATTEMPTS = 5;
+    private static final long LOCKOUT_MS = 15 * 60 * 1000L;
+
+    private static class LoginAttempt {
+        int count;
+        long lockedUntil;
+    }
 
     private static class StaffSession {
         final String username;
@@ -55,9 +69,7 @@ public class StaffController {
     }
 
     public static void revokeToken(String token) {
-        if (token != null) {
-            ACTIVE_TOKENS.remove(token.trim());
-        }
+        if (token != null) ACTIVE_TOKENS.remove(token.trim());
     }
 
     public static void revokeTokensForUsername(String username) {
@@ -99,8 +111,7 @@ public class StaffController {
         if (storedPassword.startsWith("SHA256$")) {
             String[] parts = storedPassword.split("\\$");
             if (parts.length == 3) {
-                String salt = parts[1];
-                String expectedHash = hashPassword(rawPassword, salt);
+                String expectedHash = hashPassword(rawPassword, parts[1]);
                 return MessageDigest.isEqual(
                         expectedHash.getBytes(StandardCharsets.UTF_8),
                         storedPassword.getBytes(StandardCharsets.UTF_8)
@@ -111,7 +122,14 @@ public class StaffController {
         return storedPassword.equals(rawPassword);
     }
 
-    // 1. Register a New Staff Member (ADMIN-Only unless bootstrapping first user)
+    private void recordFailedAttempt(String key) {
+        LoginAttempt attempt = FAILED_LOGINS.computeIfAbsent(key, k -> new LoginAttempt());
+        attempt.count++;
+        if (attempt.count >= MAX_FAILED_ATTEMPTS) {
+            attempt.lockedUntil = System.currentTimeMillis() + LOCKOUT_MS;
+        }
+    }
+
     @PostMapping("/register")
     public ResponseEntity<?> registerStaff(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
@@ -133,32 +151,48 @@ public class StaffController {
         }
 
         newStaff.setUsername(cleanUsername);
-        if (newStaff.getRole() == null || newStaff.getRole().trim().isEmpty()) {
-            newStaff.setRole("STAFF");
-        } else {
-            newStaff.setRole(newStaff.getRole().trim().toUpperCase());
-        }
+        newStaff.setRole((newStaff.getRole() == null || newStaff.getRole().trim().isEmpty())
+                ? "STAFF" : newStaff.getRole().trim().toUpperCase());
 
         String salt = generateSalt();
         newStaff.setPassword(hashPassword(newStaff.getPassword(), salt));
 
-        StaffMember savedStaff = staffRepository.save(newStaff);
-        return ResponseEntity.ok(savedStaff);
+        return ResponseEntity.ok(staffRepository.save(newStaff));
     }
 
-    // 2. Check Login Credentials & Issue Session Token
     @PostMapping("/login")
     public ResponseEntity<?> loginStaff(@RequestBody Map<String, String> credentials) {
         String username = credentials.get("username");
         String password = credentials.get("password");
+        String gatePin = credentials.get("gatePin");
 
         if (username == null || password == null) {
             return ResponseEntity.status(400).body("Username and password are required.");
         }
 
-        StaffMember staff = staffRepository.findByUsername(username.trim());
+        String attemptKey = username.trim().toLowerCase();
+        LoginAttempt attempt = FAILED_LOGINS.get(attemptKey);
+        if (attempt != null && attempt.lockedUntil > System.currentTimeMillis()) {
+            long minsLeft = Math.max(1, (attempt.lockedUntil - System.currentTimeMillis()) / 60000);
+            return ResponseEntity.status(429).body("Too many failed attempts. Try again in " + minsLeft + " minute(s).");
+        }
 
+        // Second Security Layer: Server-side Staff Access PIN (when STAFF_GATE_PIN env var is set on Render)
+        if (staffGatePin != null && !staffGatePin.isBlank()) {
+            boolean pinMatch = gatePin != null && MessageDigest.isEqual(
+                    gatePin.trim().getBytes(StandardCharsets.UTF_8),
+                    staffGatePin.trim().getBytes(StandardCharsets.UTF_8)
+            );
+            if (!pinMatch) {
+                recordFailedAttempt(attemptKey);
+                return ResponseEntity.status(401).body("Invalid Staff Access PIN or credentials.");
+            }
+        }
+
+        StaffMember staff = staffRepository.findByUsername(username.trim());
         if (staff != null && verifyPassword(password, staff.getPassword())) {
+            FAILED_LOGINS.remove(attemptKey);
+
             if (!staff.getPassword().startsWith("SHA256$")) {
                 String salt = generateSalt();
                 staff.setPassword(hashPassword(password, salt));
@@ -175,55 +209,42 @@ public class StaffController {
             staff.setToken(sessionToken);
             return ResponseEntity.ok(staff);
         } else {
-            return ResponseEntity.status(401).body("Invalid username or password.");
+            recordFailedAttempt(attemptKey);
+            return ResponseEntity.status(401).body("Invalid Staff Access PIN or credentials.");
         }
     }
 
-    // 3. Explicit Logout Endpoint
     @PostMapping("/logout")
     public ResponseEntity<?> logoutStaff(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
         revokeToken(token);
         return ResponseEntity.ok("Logged out securely.");
     }
 
-    // 4. ADMIN ONLY: List all staff accounts
     @GetMapping
     public ResponseEntity<?> listStaff(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
-        if (!isAdminToken(token)) {
-            return ResponseEntity.status(403).body("Forbidden: ADMIN access required.");
-        }
+        if (!isAdminToken(token)) return ResponseEntity.status(403).body("Forbidden: ADMIN access required.");
         return ResponseEntity.ok(staffRepository.findAll());
     }
 
-    // 5. ADMIN ONLY: Delete a staff account & immediately revoke active sessions
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteStaff(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
             @PathVariable Long id) {
 
-        if (!isAdminToken(token)) {
-            return ResponseEntity.status(403).body("Forbidden: ADMIN access required.");
-        }
+        if (!isAdminToken(token)) return ResponseEntity.status(403).body("Forbidden: ADMIN access required.");
 
         Optional<StaffMember> targetOpt = staffRepository.findById(id);
-        if (targetOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
+        if (targetOpt.isEmpty()) return ResponseEntity.notFound().build();
 
         StaffMember target = targetOpt.get();
-        String callerUsername = getSessionUsername(token);
-
-        if (target.getUsername() != null && target.getUsername().equalsIgnoreCase(callerUsername)) {
+        if (target.getUsername() != null && target.getUsername().equalsIgnoreCase(getSessionUsername(token))) {
             return ResponseEntity.badRequest().body("You cannot delete your own active admin account.");
         }
 
         if ("ADMIN".equalsIgnoreCase(target.getRole())) {
             long adminCount = staffRepository.findAll().stream()
-                    .filter(s -> "ADMIN".equalsIgnoreCase(s.getRole()))
-                    .count();
-            if (adminCount <= 1) {
-                return ResponseEntity.badRequest().body("Cannot delete the last remaining ADMIN account.");
-            }
+                    .filter(s -> "ADMIN".equalsIgnoreCase(s.getRole())).count();
+            if (adminCount <= 1) return ResponseEntity.badRequest().body("Cannot delete the last remaining ADMIN account.");
         }
 
         revokeTokensForUsername(target.getUsername());

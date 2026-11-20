@@ -272,6 +272,29 @@ public class BookingController {
 
     @PutMapping("/{id}/time")
     @Transactional
+    public ResponseEntity<?> updatePartySize(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token,
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> payload) {
+
+        if (!StaffController.isValidStaffToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
+        }
+        Optional<Booking> bookingOpt = bookingRepository.findById(id);
+        if (bookingOpt.isEmpty()) return ResponseEntity.notFound().build();
+
+        try {
+            int newSize = Integer.parseInt(String.valueOf(payload.get("partySize")));
+            if (newSize < 1 || newSize > 50) {
+                return ResponseEntity.badRequest().body("Party size must be between 1 and 50 guests.");
+            }
+            Booking booking = bookingOpt.get();
+            booking.setPartySize(newSize);
+            return ResponseEntity.ok(bookingRepository.save(booking));
+        } catch (Exception ex) {
+            return ResponseEntity.badRequest().body("Invalid guest number.");
+        }
+    }
     public ResponseEntity<?> updateBookingTime(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
             @PathVariable Long id,
