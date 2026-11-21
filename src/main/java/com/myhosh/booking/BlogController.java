@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/blog")
@@ -41,6 +42,35 @@ public class BlogController {
         return ResponseEntity.ok(blogPostRepository.save(post));
     }
 
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updatePost(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token,
+            @PathVariable Long id,
+            @RequestBody BlogPost updatedData) {
+
+        if (!StaffController.isAdminToken(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: Only ADMIN can edit blog posts or photos.");
+        }
+        if (updatedData.getTitle() == null || updatedData.getTitle().isBlank()) {
+            return ResponseEntity.badRequest().body("Post title is required.");
+        }
+
+        Optional<BlogPost> existingOpt = blogPostRepository.findById(id);
+        if (existingOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        BlogPost existing = existingOpt.get();
+        existing.setTitle(updatedData.getTitle().trim());
+        existing.setCategory((updatedData.getCategory() == null || updatedData.getCategory().isBlank())
+                ? existing.getCategory()
+                : updatedData.getCategory().trim());
+        existing.setContent(updatedData.getContent() != null ? updatedData.getContent() : "");
+        existing.setImageUrls(updatedData.getImageUrls());
+
+        return ResponseEntity.ok(blogPostRepository.save(existing));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deletePost(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
@@ -56,4 +86,3 @@ public class BlogController {
         return ResponseEntity.ok("Blog post deleted.");
     }
 }
-
