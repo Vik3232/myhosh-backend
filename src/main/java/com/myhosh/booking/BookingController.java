@@ -182,7 +182,6 @@ public class BookingController {
 
             List<Booking> sameDayBookings = bookingRepository.findActiveBookingsByDate(booking.getBookingDate());
 
-            // Only enforce 2-hour overlap check when assigned to a numbered Table 1-13
             if (lockedTable != null) {
                 boolean tableConflict = sameDayBookings.stream()
                         .filter(b -> b.getRestaurantTable() != null
@@ -204,7 +203,7 @@ public class BookingController {
                                     && b.getCustomer().getPhone().replaceAll("\\s+", "").equals(cleanIncomingPhone));
                     if (duplicatePhone) {
                         return ResponseEntity.badRequest().body(
-                                "❌ Anti-Spam Protection: A reservation is already secured under this phone number for this date.");
+                                "Anti-Spam Protection: A reservation is already secured under this phone number for this date.");
                     }
                 }
             }
@@ -270,7 +269,44 @@ public class BookingController {
         return ResponseEntity.ok(bookingRepository.save(booking));
     }
 
+    // UPDATE SITTING TIME - STAFF ONLY
     @PutMapping("/{id}/time")
+    @Transactional
+    public ResponseEntity<?> updateBookingTime(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token,
+            @PathVariable Long id,
+            @RequestBody Map<String, String> payload) {
+
+        if (!StaffController.isValidStaffToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
+        }
+        Optional<Booking> bookingOpt = bookingRepository.findById(id);
+        if (bookingOpt.isEmpty()) return ResponseEntity.notFound().build();
+
+        String newTimeStr = payload.get("bookingTime");
+        if (newTimeStr == null || newTimeStr.isBlank()) {
+            newTimeStr = payload.get("time");
+        }
+        if (newTimeStr == null || newTimeStr.isBlank()) {
+            return ResponseEntity.badRequest().body("Valid time required.");
+        }
+
+        newTimeStr = newTimeStr.trim();
+        if (newTimeStr.length() == 5) {
+            newTimeStr += ":00";
+        }
+
+        try {
+            Booking booking = bookingOpt.get();
+            booking.setBookingTime(LocalTime.parse(newTimeStr));
+            return ResponseEntity.ok(bookingRepository.save(booking));
+        } catch (Exception ex) {
+            return ResponseEntity.badRequest().body("Invalid time format. Use HH:mm (e.g. 19:30).");
+        }
+    }
+
+    // UPDATE PARTY SIZE (GUEST COUNT) - STAFF ONLY
+    @PutMapping("/{id}/party-size")
     @Transactional
     public ResponseEntity<?> updatePartySize(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
@@ -294,27 +330,6 @@ public class BookingController {
         } catch (Exception ex) {
             return ResponseEntity.badRequest().body("Invalid guest number.");
         }
-    }
-    public ResponseEntity<?> updateBookingTime(
-            @RequestHeader(value = "X-Staff-Token", required = false) String token,
-            @PathVariable Long id,
-            @RequestBody Map<String, String> payload) {
-
-        if (!StaffController.isValidStaffToken(token)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
-        }
-        Optional<Booking> bookingOpt = bookingRepository.findById(id);
-        if (bookingOpt.isEmpty()) return ResponseEntity.notFound().build();
-
-        String newTimeStr = payload.get("bookingTime");
-        if (newTimeStr == null || newTimeStr.isBlank()) {
-            return ResponseEntity.badRequest().body("Valid time required.");
-        }
-        if (newTimeStr.length() == 5) newTimeStr += ":00";
-
-        Booking booking = bookingOpt.get();
-        booking.setBookingTime(LocalTime.parse(newTimeStr));
-        return ResponseEntity.ok(bookingRepository.save(booking));
     }
 
     @PutMapping("/{id}/table/{tableId}")
