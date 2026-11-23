@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/staff")
@@ -122,6 +123,15 @@ public class StaffController {
         return storedPassword.equals(rawPassword);
     }
 
+    // 8-64 chars: at least 1 lowercase, 1 uppercase, 1 number, and 1 special symbol (@ ! # $ % etc.)
+    private static final Pattern STRONG_PASSWORD_PATTERN = Pattern.compile(
+            "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9\\s]).{8,64}$"
+    );
+
+    private boolean isStrongPassword(String rawPassword) {
+        return rawPassword != null && STRONG_PASSWORD_PATTERN.matcher(rawPassword).matches();
+    }
+
     private void recordFailedAttempt(String key) {
         LoginAttempt attempt = FAILED_LOGINS.computeIfAbsent(key, k -> new LoginAttempt());
         attempt.count++;
@@ -140,14 +150,19 @@ public class StaffController {
             return ResponseEntity.status(403).body("Forbidden: Only an authenticated ADMIN can register new staff.");
         }
 
-        if (newStaff.getUsername() == null || newStaff.getUsername().trim().isEmpty()
-                || newStaff.getPassword() == null || newStaff.getPassword().length() < 6) {
-            return ResponseEntity.badRequest().body("Username is required and password must be at least 6 characters.");
+        String cleanUsername = newStaff.getUsername() != null ? newStaff.getUsername().trim() : "";
+        if (cleanUsername.length() < 3) {
+            return ResponseEntity.badRequest().body("Username must be at least 3 characters.");
         }
 
-        String cleanUsername = newStaff.getUsername().trim();
-        if (staffRepository.findByUsername(cleanUsername) != null) {
-            return ResponseEntity.badRequest().body("Username already exists.");
+        if (!isStrongPassword(newStaff.getPassword())) {
+            return ResponseEntity.badRequest().body(
+                    "Password must be 8+ characters with uppercase, lowercase, a number, and a symbol (e.g. @, !, #)."
+            );
+        }
+
+        if (staffRepository.existsByUsernameIgnoreCase(cleanUsername)) {
+            return ResponseEntity.status(409).body("Username already exists.");
         }
 
         newStaff.setUsername(cleanUsername);
@@ -224,6 +239,78 @@ public class StaffController {
     public ResponseEntity<?> listStaff(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
         if (!isAdminToken(token)) return ResponseEntity.status(403).body("Forbidden: ADMIN access required.");
         return ResponseEntity.ok(staffRepository.findAll());
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateStaffCredentials(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token,
+            @PathVariable Long id,
+            @RequestBody Map<String, String> payload) {
+
+        if (!isAdminToken(token)) {
+            return ResponseEntity.status(403).body("Forbidden: ADMIN access required.");
+        }
+
+        Optional<StaffMember> targetOpt = staffRepository.findById(id);
+        if (targetOpt.isEmpty()) {
+            return ResponseEntity.status(404).body("Staff account not found.");
+        }
+
+        StaffMember target = targetOpt.get();
+        String oldUsername = target.getUsername();
+        String newUsername = payload.get("username") != null ? payload.get("username").trim() : "";
+        String newPassword = payload.get("password") != null ? payload.get("password") : "";
+
+        boolean usernameChanged = !newUsername.isEmpty() && !newUsername.equalsIgnoreCase(oldUsername);
+        boolean passwordChanged = !newPassword.isEmpty();
+
+        if (usernameChanged) {
+            if (newUsername.length() < 3) {
+                return ResponseEntity.badRequest().body("Username must be at least 3 characters.");
+            }
+            if (staffRepository.existsByUsernameIgnoreCase(newUsername)) {
+                return ResponseEntity.status(409).body("That username is already in use.");
+            }
+            target.setUsername(newUsername);
+        }
+
+        if (passwordChanged) {
+            if (!isStrongPassword(newPassword)) {
+                return ResponseEntity.badRequest().body(
+                        "New password must be 8+ characters with uppercase, lowercase, a number, and a symbol (e.g. @, !, #)."
+                );
+            }
+            String salt = generateSalt();
+            target.setPassword(hashPassword(newPassword, salt));
+        }
+
+        StaffMember saved = staffRepository.save(target);
+
+        // Clear any brute-force lockout if the Admin reset their password
+        if (passwordChanged) {
+            FAILED_LOGINS.remove(oldUsername.toLowerCase());
+            FAILED_LOGINS.remove(saved.getUsername().toLowerCase());
+        }
+
+        // Session hygiene: kick out any active sessions for the edited staff member,
+        // while keeping the Admin's own current request token valid if they edited themselves
+        String callerToken = token != null ? token.trim() : "";
+        if (usernameChanged || passwordChanged) {
+            ACTIVE_TOKENS.entrySet().removeIf(entry ->
+                    oldUsername.equalsIgnoreCase(entry.getValue().username)
+                            && !entry.getKey().equals(callerToken)
+            );
+            StaffSession callerSession = ACTIVE_TOKENS.get(callerToken);
+            if (callerSession != null && oldUsername.equalsIgnoreCase(callerSession.username)) {
+                ACTIVE_TOKENS.put(callerToken, new StaffSession(
+                        saved.getUsername(),
+                        saved.getRole(),
+                        callerSession.expiresAt
+                ));
+            }
+        }
+
+        return ResponseEntity.ok(saved);
     }
 
     @DeleteMapping("/{id}")
