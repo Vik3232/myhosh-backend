@@ -124,6 +124,9 @@ public class BookingController {
         if (!StaffController.isValidStaffToken(token)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized: Staff authentication required.");
         }
+        if (!StaffController.isAdminToken(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: ADMIN access required to view booking history.");
+        }
         LocalDate today = LocalDate.now(LONDON_ZONE);
         return ResponseEntity.ok(bookingRepository.findByBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(today));
     }
