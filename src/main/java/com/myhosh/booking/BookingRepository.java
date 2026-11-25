@@ -69,4 +69,19 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
             ORDER BY b.marketingConsentAt DESC
             """)
     java.util.List<Booking> findMarketingOptInBookings();
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Transactional
+    @Query("""
+            UPDATE Booking b
+            SET b.reviewConsent = false,
+                b.reviewConsentAt = null,
+                b.marketingConsent = false,
+                b.marketingConsentAt = null
+            WHERE b.customer.id IN (
+                SELECT c.id FROM Customer c
+                WHERE c.email IS NOT NULL AND LOWER(TRIM(c.email)) = LOWER(TRIM(:email))
+            )
+            """)
+    int withdrawAllEmailConsentByEmail(@Param("email") String email);
 }

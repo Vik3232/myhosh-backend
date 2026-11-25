@@ -360,7 +360,7 @@ public class BookingController {
         }
         if (!StaffController.isAdminToken(token)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body("Forbidden: ADMIN access required to export marketing data.");
+                    .body("Forbidden: ADMIN access required to update marketing consent.");
         }
         Optional<Booking> bookingOpt = bookingRepository.findById(id);
         if (bookingOpt.isEmpty()) return ResponseEntity.notFound().build();
@@ -598,6 +598,48 @@ public class BookingController {
         return ResponseEntity.ok("Cancelled");
     }
 
+    @PutMapping("/{id}/withdraw-email-consent")
+    @Transactional
+    public ResponseEntity<?> withdrawEmailConsent(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token,
+            @PathVariable Long id) {
+
+        if (!StaffController.isValidStaffToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
+        }
+        if (!StaffController.isAdminToken(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Forbidden: ADMIN access required to manage email consent.");
+        }
+
+        Optional<Booking> bookingOpt = bookingRepository.findById(id);
+        if (bookingOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Booking booking = bookingOpt.get();
+        String email = (booking.getCustomer() != null && booking.getCustomer().getEmail() != null)
+                ? booking.getCustomer().getEmail().trim()
+                : "";
+
+        int updatedCount;
+        if (!email.isEmpty()) {
+            updatedCount = bookingRepository.withdrawAllEmailConsentByEmail(email);
+        } else {
+            booking.setReviewConsent(false);
+            booking.setReviewConsentAt(null);
+            booking.setMarketingConsent(false);
+            booking.setMarketingConsentAt(null);
+            bookingRepository.save(booking);
+            updatedCount = 1;
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "updatedCount", updatedCount,
+                "email", email
+        ));
+    }
+
     @DeleteMapping("/{id}/customer-data")
     @Transactional
     public ResponseEntity<?> deleteCustomerData(
@@ -606,6 +648,10 @@ public class BookingController {
 
         if (!StaffController.isValidStaffToken(token)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
+        }
+        if (!StaffController.isAdminToken(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Forbidden: ADMIN access required to permanently erase customer data.");
         }
 
         Optional<Booking> bookingOpt = bookingRepository.findById(id);
