@@ -5,4 +5,7 @@ import java.util.List;
 
 public interface BlogPostRepository extends JpaRepository<BlogPost, Long> {
     List<BlogPost> findAllByOrderByCreatedAtDesc();
+
+
+
 }

@@ -1,6 +1,8 @@
 package com.myhosh.booking;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,6 +14,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -247,9 +251,13 @@ public class BookingController {
                 booking.setStatus("CONFIRMED");
             }
 
-            // UK GDPR Art. 7: Record explicit consent + timestamp only when a real email is provided
+            // UK GDPR Art. 7: Record explicit consent + timestamp separately for review vs. marketing
             String guestEmail = booking.getCustomer().getEmail();
-            boolean hasValidEmail = guestEmail != null && !guestEmail.isBlank() && guestEmail.contains("@");
+            boolean hasValidEmail = guestEmail != null
+                    && !guestEmail.isBlank()
+                    && guestEmail.contains("@")
+                    && !guestEmail.trim().toLowerCase().endsWith(".local");
+
             if (!isStaffRequest && hasValidEmail && Boolean.TRUE.equals(booking.getReviewConsent())) {
                 booking.setReviewConsent(true);
                 booking.setReviewConsentAt(Instant.now());
@@ -257,6 +265,15 @@ public class BookingController {
                 booking.setReviewConsent(false);
                 booking.setReviewConsentAt(null);
             }
+
+            if (!isStaffRequest && hasValidEmail && Boolean.TRUE.equals(booking.getMarketingConsent())) {
+                booking.setMarketingConsent(true);
+                booking.setMarketingConsentAt(Instant.now());
+            } else {
+                booking.setMarketingConsent(false);
+                booking.setMarketingConsentAt(null);
+            }
+
             booking.setReviewEmailSent(false);
 
             savedBooking = bookingRepository.save(booking);
@@ -326,6 +343,94 @@ public class BookingController {
         booking.setReviewConsent(consent);
         booking.setReviewConsentAt(consent ? Instant.now() : null);
         return ResponseEntity.ok(bookingRepository.save(booking));
+    }
+
+    @PutMapping("/{id}/marketing-consent")
+    @Transactional
+    public ResponseEntity<?> updateMarketingConsent(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token,
+            @PathVariable Long id,
+            @RequestBody Map<String, Boolean> payload) {
+
+        if (!StaffController.isValidStaffToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
+        }
+        if (!StaffController.isAdminToken(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Forbidden: ADMIN access required to export marketing data.");
+        }
+        Optional<Booking> bookingOpt = bookingRepository.findById(id);
+        if (bookingOpt.isEmpty()) return ResponseEntity.notFound().build();
+
+        Booking booking = bookingOpt.get();
+        boolean consent = Boolean.TRUE.equals(payload.get("marketingConsent"));
+        booking.setMarketingConsent(consent);
+        booking.setMarketingConsentAt(consent ? Instant.now() : null);
+        return ResponseEntity.ok(bookingRepository.save(booking));
+    }
+
+    // UK GDPR Art. 5(1)(c) Data Minimisation: Exports ONLY opted-in Name, Email, and Consent Timestamp
+    @GetMapping("/marketing-export")
+    @Transactional
+    public ResponseEntity<?> exportMarketingOptIns(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token) {
+
+        if (!StaffController.isValidStaffToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
+        }
+
+        List<Booking> optedIn = bookingRepository.findMarketingOptInBookings();
+
+        // Deduplicate by lowercase email, keeping each guest's most recent consent record
+        Map<String, Booking> uniqueByEmail = new LinkedHashMap<>();
+        for (Booking b : optedIn) {
+            if (b.getCustomer() == null || b.getCustomer().getEmail() == null) continue;
+            String normalizedEmail = b.getCustomer().getEmail().trim().toLowerCase();
+            if (normalizedEmail.isEmpty() || !normalizedEmail.contains("@") || normalizedEmail.endsWith(".local")) {
+                continue;
+            }
+            uniqueByEmail.putIfAbsent(normalizedEmail, b);
+        }
+
+        StringBuilder csv = new StringBuilder();
+        csv.append("Full Name,Email,Consent Timestamp (UTC)\n");
+        for (Booking b : uniqueByEmail.values()) {
+            String name = b.getCustomer().getFullName();
+            String email = b.getCustomer().getEmail().trim();
+            String consentedAt = b.getMarketingConsentAt() != null ? b.getMarketingConsentAt().toString() : "";
+            csv.append(sanitizeCsvCell(name)).append(',')
+                    .append(sanitizeCsvCell(email)).append(',')
+                    .append(sanitizeCsvCell(consentedAt)).append('\n');
+        }
+
+        // Audit every bulk marketing export
+        GdprAuditLog audit = new GdprAuditLog();
+        audit.setBookingId(0L);
+        audit.setAction("MARKETING_CSV_EXPORT");
+        audit.setPerformedBy(StaffController.getSessionUsername(token));
+        audit.setActorRole(StaffController.getSessionRole(token));
+        audit.setPerformedAt(Instant.now());
+        gdprAuditLogRepository.save(audit);
+
+        String filename = "myhosh-marketing-optins-" + LocalDate.now(LONDON_ZONE) + ".csv";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
+                .body(csv.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    // OWASP CSV Injection Defense: Prevents Excel formula execution (=, +, -, @) in guest names
+    private String sanitizeCsvCell(String value) {
+        if (value == null) return "\"\"";
+        String clean = value.replace("\r", " ").replace("\n", " ").trim();
+        if (!clean.isEmpty()) {
+            char first = clean.charAt(0);
+            if (first == '=' || first == '+' || first == '-' || first == '@' || first == '\t') {
+                clean = "'" + clean;
+            }
+        }
+        return "\"" + clean.replace("\"", "\"\"") + "\"";
     }
 
     @PutMapping("/{id}/notes")

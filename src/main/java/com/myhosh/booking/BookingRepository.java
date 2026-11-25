@@ -60,4 +60,13 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
             @org.springframework.data.repository.query.Param("cutoff") java.time.Instant cutoff,
             @org.springframework.data.repository.query.Param("oldestAllowed") java.time.Instant oldestAllowed
     );
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT b FROM Booking b
+            JOIN FETCH b.customer
+            WHERE b.marketingConsent = true
+              AND b.customer IS NOT NULL
+              AND b.customer.email IS NOT NULL
+            ORDER BY b.marketingConsentAt DESC
+            """)
+    java.util.List<Booking> findMarketingOptInBookings();
 }

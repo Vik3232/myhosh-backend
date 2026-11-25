@@ -56,6 +56,12 @@ public class Booking {
     @Column(name = "review_consent_at")
     private Instant reviewConsentAt;
 
+    @Column(name = "marketing_consent")
+    private Boolean marketingConsent = false;
+
+    @Column(name = "marketing_consent_at")
+    private Instant marketingConsentAt;
+
     public Long getId() {
         return id;
     }
@@ -176,5 +182,21 @@ public class Booking {
 
     public void setReviewConsentAt(Instant reviewConsentAt) {
         this.reviewConsentAt = reviewConsentAt;
+    }
+
+    public Boolean getMarketingConsent() {
+        return marketingConsent;
+    }
+
+    public void setMarketingConsent(Boolean marketingConsent) {
+        this.marketingConsent = marketingConsent;
+    }
+
+    public Instant getMarketingConsentAt() {
+        return marketingConsentAt;
+    }
+
+    public void setMarketingConsentAt(Instant marketingConsentAt) {
+        this.marketingConsentAt = marketingConsentAt;
     }
 }
