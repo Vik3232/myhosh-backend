@@ -1,9 +1,9 @@
 package com.myhosh.booking;
 
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import java.util.List;
 
-@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/api/customers")
 public class CustomerController {
@@ -14,17 +14,28 @@ public class CustomerController {
         this.repository = repository;
     }
 
-    // 1. GET Request: Read all customers
     @GetMapping
-    public List<Customer> getAllCustomers() {
-        return repository.findAll();
+    public ResponseEntity<?> getAllCustomers(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token) {
+        if (!StaffController.isValidStaffToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
+        }
+        if (!StaffController.isAdminToken(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: ADMIN access required.");
+        }
+        return ResponseEntity.ok(repository.findAll());
     }
 
-    // 2. POST Request: Create a new customer from the website!
     @PostMapping
-    public Customer createCustomer(@RequestBody Customer newCustomer) {
-        // The @RequestBody tag takes the JSON from the website and turns it into a Java Customer
-        // The .save() command writes it directly into PostgreSQL
-        return repository.save(newCustomer);
+    public ResponseEntity<?> createCustomer(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token,
+            @RequestBody Customer newCustomer) {
+        if (!StaffController.isValidStaffToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
+        }
+        if (!StaffController.isAdminToken(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: ADMIN access required.");
+        }
+        return ResponseEntity.ok(repository.save(newCustomer));
     }
 }

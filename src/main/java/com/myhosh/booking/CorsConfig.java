@@ -18,7 +18,7 @@ public class CorsConfig {
                 registry.addMapping("/**")
                         .allowedOriginPatterns(
                                 "http://localhost:*",
-                                "https://*.vercel.app",
+                                "https://myhosh-*.vercel.app",
                                 "https://myhosh-salisbury.co.uk",
                                 "https://*.myhosh-salisbury.co.uk",
                                 "https://myhosh.co.uk",
