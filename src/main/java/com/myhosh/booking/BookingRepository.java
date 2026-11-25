@@ -46,4 +46,18 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     @Transactional
     @Query("DELETE FROM Booking b WHERE b.bookingDate < :cutoffDate")
     int deleteExpiredBookingsBefore(@Param("cutoffDate") LocalDate cutoffDate);
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT b FROM Booking b
+            JOIN FETCH b.customer
+            WHERE UPPER(b.status) = 'COMPLETED'
+              AND b.reviewConsent = true
+              AND b.completedAt IS NOT NULL
+              AND b.completedAt <= :cutoff
+              AND b.completedAt >= :oldestAllowed
+              AND (b.reviewEmailSent IS NULL OR b.reviewEmailSent = false)
+            """)
+    java.util.List<Booking> findDueReviewEmails(
+            @org.springframework.data.repository.query.Param("cutoff") java.time.Instant cutoff,
+            @org.springframework.data.repository.query.Param("oldestAllowed") java.time.Instant oldestAllowed
+    );
 }

@@ -1,6 +1,7 @@
 package com.myhosh.booking;
 
 import jakarta.persistence.*;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.LocalDateTime;
@@ -42,6 +43,18 @@ public class Booking {
 
     @Column(name = "created_at", insertable = false, updatable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
+    @Column(name = "review_email_sent")
+    private Boolean reviewEmailSent = false;
+
+    @Column(name = "review_consent")
+    private Boolean reviewConsent = false;
+
+    @Column(name = "review_consent_at")
+    private Instant reviewConsentAt;
 
     public Long getId() {
         return id;
@@ -121,7 +134,9 @@ public class Booking {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+
     }
+
 
     public String getStaffNotes() {
         return staffNotes;
@@ -129,5 +144,37 @@ public class Booking {
 
     public void setStaffNotes(String staffNotes) {
         this.staffNotes = staffNotes;
+    }
+
+    public Instant getCompletedAt() {
+        return completedAt;
+    }
+
+    public void setCompletedAt(Instant completedAt) {
+        this.completedAt = completedAt;
+    }
+
+    public Boolean getReviewEmailSent() {
+        return reviewEmailSent;
+    }
+
+    public void setReviewEmailSent(Boolean reviewEmailSent) {
+        this.reviewEmailSent = reviewEmailSent;
+    }
+
+    public Boolean getReviewConsent() {
+        return reviewConsent;
+    }
+
+    public void setReviewConsent(Boolean reviewConsent) {
+        this.reviewConsent = reviewConsent;
+    }
+
+    public Instant getReviewConsentAt() {
+        return reviewConsentAt;
+    }
+
+    public void setReviewConsentAt(Instant reviewConsentAt) {
+        this.reviewConsentAt = reviewConsentAt;
     }
 }

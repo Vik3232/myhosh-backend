@@ -286,4 +286,101 @@ public class EmailService {
             }
         });
     }
+
+    public void sendReviewRequestEmail(String to, String customerName) {
+        if (!isValidRecipient(to)) {
+            System.out.println("Skipping review email: optional or internal address (" + to + ")");
+            return;
+        }
+
+        String safeName = HtmlUtils.htmlEscape(customerName != null && !customerName.isBlank() ? customerName : "Guest");
+        String reviewUrl = "https://search.google.com/local/writereview?placeid=ChIJid9eqcjrc0gRejtjRW2CRaE";
+
+        String template = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>Thank you for dining with us | MyHosh Salisbury</title>
+              <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+            </head>
+            <body style="margin:0;padding:0;background-color:#F4EFE4;font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1B1A17;-webkit-font-smoothing:antialiased;">
+              <div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">
+                Thank you for visiting MyHosh Salisbury. We would love to hear about your meal.
+              </div>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F4EFE4;padding:32px 16px;">
+                <tr>
+                  <td align="center">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background-color:#FFFFFF;border:1px solid #E2D9C5;border-radius:16px;overflow:hidden;">
+
+                      <tr>
+                        <td style="background-color:#0A2F25;padding:32px 24px;text-align:center;">
+                          <div style="font-size:20px;line-height:28px;font-weight:600;letter-spacing:0.18em;color:#FBF6EA;">MYHOSH</div>
+                          <div style="margin-top:4px;font-size:12px;line-height:16px;font-weight:500;letter-spacing:0.12em;text-transform:uppercase;color:#E5CFA3;">99 Fisherton Street, Salisbury</div>
+                        </td>
+                      </tr>
+
+                      <tr>
+                        <td style="padding:32px 24px;">
+                          <h1 style="margin:0 0 12px 0;font-size:24px;line-height:32px;font-weight:600;color:#1B1A17;letter-spacing:-0.015em;">
+                            Thank you for dining with us, {{NAME}}
+                          </h1>
+                          <p style="margin:0 0 16px 0;font-size:15px;line-height:24px;color:#5C584F;">
+                            We hope you enjoyed your meal at MyHosh Salisbury. As an independent local restaurant, honest guest feedback means a great deal to our kitchen and team.
+                          </p>
+                          <p style="margin:0 0 24px 0;font-size:15px;line-height:24px;color:#5C584F;">
+                            If you have a spare minute, we would be grateful if you shared what you enjoyed most from our charcoal grill, meze, or service on Google.
+                          </p>
+
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+                            <tr>
+                              <td style="border-radius:8px;background-color:#C89D54;">
+                                <a href="{{REVIEW_URL}}" style="display:inline-block;padding:12px 22px;font-size:14px;line-height:20px;font-weight:600;color:#1B1A17;text-decoration:none;">
+                                  Leave a Google review
+                                </a>
+                              </td>
+                            </tr>
+                          </table>
+
+                          <p style="margin:0;font-size:13px;line-height:20px;color:#7A756A;">
+                            You received this one time message because you opted in when booking at MyHosh Salisbury (99 Fisherton Street, Salisbury, SP2 7SP). We will not add you to any mailing list. To withdraw consent or request data erasure under UK GDPR, reply to this email or call +44 7853 404534.
+                          </p>
+                        </td>
+                      </tr>
+
+                      <tr>
+                        <td style="background-color:#131209;padding:20px 24px;text-align:center;font-size:12px;line-height:18px;color:#A8A59E;">
+                          MyHosh Salisbury &middot; 99 Fisherton Street, Salisbury SP2 7SP &middot; <a href="https://myhosh-salisbury.co.uk" style="color:#E5CFA3;text-decoration:none;">myhosh-salisbury.co.uk</a>
+                        </td>
+                      </tr>
+
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </body>
+            </html>
+            """;
+
+        String htmlBody = template
+                .replace("{{NAME}}", safeName)
+                .replace("{{REVIEW_URL}}", reviewUrl);
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                MimeMessage mimeMessage = mailSender.createMimeMessage();
+                MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, true, "UTF-8");
+                helper.setFrom(fromEmail);
+                helper.setTo(to.trim());
+                helper.setSubject("Thank you for dining at MyHosh Salisbury");
+                helper.setText(htmlBody, true);
+                mailSender.send(mimeMessage);
+                System.out.println("Post-dining review email sent to " + to);
+            } catch (Exception e) {
+                System.err.println("Failed to send review email: " + e.getMessage());
+            }
+        });
+    }
 }

@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -45,13 +46,43 @@ public class BookingController {
     }
 
     @Scheduled(initialDelay = 30000, fixedRate = 86400000)
+    @Transactional
     public void purgeExpiredGdprBookings() {
         try {
             LocalDate cutoffDate = LocalDate.now(LONDON_ZONE).minusMonths(6);
-            int deletedCount = bookingRepository.deleteExpiredBookingsBefore(cutoffDate);
-            System.out.println("🔒 [UK GDPR Auto-Purge] Deleted " + deletedCount + " reservations before " + cutoffDate + ".");
+            int deletedBookings = bookingRepository.deleteExpiredBookingsBefore(cutoffDate);
+            int deletedCustomers = customerRepository.deleteOrphanedCustomers();
+            System.out.println("[UK GDPR Auto-Purge] Deleted " + deletedBookings
+                    + " reservations and " + deletedCustomers + " orphaned customer records before " + cutoffDate + ".");
         } catch (Exception e) {
-            System.err.println("⚠️ [UK GDPR Auto-Purge] Error during scheduled cleanup: " + e.getMessage());
+            System.err.println("[UK GDPR Auto-Purge] Error during scheduled cleanup: " + e.getMessage());
+        }
+    }
+
+
+
+    @Scheduled(initialDelay = 60000, fixedRate = 900000)
+    @Transactional
+    public void processPendingReviewEmails() {
+        try {
+            Instant now = Instant.now();
+            Instant cutoff = now.minus(Duration.ofMinutes(210)); // 3.5 hours after marked COMPLETED
+            Instant oldestAllowed = now.minus(Duration.ofHours(48));
+
+            List<Booking> dueBookings = bookingRepository.findDueReviewEmails(cutoff, oldestAllowed);
+            for (Booking booking : dueBookings) {
+                booking.setReviewEmailSent(true);
+                bookingRepository.save(booking);
+
+                if (booking.getCustomer() != null && booking.getCustomer().getEmail() != null) {
+                    emailService.sendReviewRequestEmail(
+                            booking.getCustomer().getEmail(),
+                            booking.getCustomer().getFullName()
+                    );
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error processing post-dining review emails: " + e.getMessage());
         }
     }
 
@@ -216,6 +247,18 @@ public class BookingController {
                 booking.setStatus("CONFIRMED");
             }
 
+            // UK GDPR Art. 7: Record explicit consent + timestamp only when a real email is provided
+            String guestEmail = booking.getCustomer().getEmail();
+            boolean hasValidEmail = guestEmail != null && !guestEmail.isBlank() && guestEmail.contains("@");
+            if (!isStaffRequest && hasValidEmail && Boolean.TRUE.equals(booking.getReviewConsent())) {
+                booking.setReviewConsent(true);
+                booking.setReviewConsentAt(Instant.now());
+            } else {
+                booking.setReviewConsent(false);
+                booking.setReviewConsentAt(null);
+            }
+            booking.setReviewEmailSent(false);
+
             savedBooking = bookingRepository.save(booking);
         }
 
@@ -247,7 +290,41 @@ public class BookingController {
         if (bookingOpt.isEmpty()) return ResponseEntity.notFound().build();
 
         Booking booking = bookingOpt.get();
-        booking.setStatus(payload.get("status"));
+        String newStatus = payload.get("status");
+        booking.setStatus(newStatus);
+
+        if ("COMPLETED".equalsIgnoreCase(newStatus)) {
+            if (booking.getCompletedAt() == null) {
+                booking.setCompletedAt(Instant.now());
+            }
+            if (booking.getReviewEmailSent() == null) {
+                booking.setReviewEmailSent(false);
+            }
+        } else if (!Boolean.TRUE.equals(booking.getReviewEmailSent())) {
+            booking.setCompletedAt(null);
+        }
+
+
+        return ResponseEntity.ok(bookingRepository.save(booking));
+    }
+
+    @PutMapping("/{id}/review-consent")
+    @Transactional
+    public ResponseEntity<?> updateReviewConsent(
+            @RequestHeader(value = "X-Staff-Token", required = false) String token,
+            @PathVariable Long id,
+            @RequestBody Map<String, Boolean> payload) {
+
+        if (!StaffController.isValidStaffToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
+        }
+        Optional<Booking> bookingOpt = bookingRepository.findById(id);
+        if (bookingOpt.isEmpty()) return ResponseEntity.notFound().build();
+
+        Booking booking = bookingOpt.get();
+        boolean consent = Boolean.TRUE.equals(payload.get("reviewConsent"));
+        booking.setReviewConsent(consent);
+        booking.setReviewConsentAt(consent ? Instant.now() : null);
         return ResponseEntity.ok(bookingRepository.save(booking));
     }
 
@@ -377,6 +454,7 @@ public class BookingController {
     }
 
     @PostMapping("/{id}/cancel")
+    @Transactional
     public ResponseEntity<?> cancelBooking(
             @RequestHeader(value = "X-Staff-Token", required = false) String token,
             @PathVariable Long id,
@@ -401,7 +479,14 @@ public class BookingController {
             );
         }
 
-        bookingRepository.deleteById(id);
+        Long customerId = booking.getCustomer() != null ? booking.getCustomer().getId() : null;
+        bookingRepository.delete(booking);
+        bookingRepository.flush();
+
+        if (customerId != null && !bookingRepository.existsByCustomerId(customerId) && customerRepository.existsById(customerId)) {
+            customerRepository.deleteById(customerId);
+        }
+
         return ResponseEntity.ok("Cancelled");
     }
 
