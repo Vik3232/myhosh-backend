@@ -13,6 +13,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
 
 @RestController
 @RequestMapping("/api/staff")
@@ -91,28 +93,75 @@ public class StaffController {
         return session != null ? session.role : "NONE";
     }
 
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    private static final int PBKDF2_ITERATIONS = 310_000;
+    private static final int PBKDF2_KEY_BITS = 256;
+
     private String hashPassword(String rawPassword, String salt) {
+        return hashPasswordPbkdf2(rawPassword, salt, PBKDF2_ITERATIONS);
+    }
+
+    private String hashPasswordPbkdf2(String rawPassword, String salt, int iterations) {
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] encoded = digest.digest((salt + ":" + rawPassword).getBytes(StandardCharsets.UTF_8));
-            return "SHA256$" + salt + "$" + Base64.getEncoder().encodeToString(encoded);
+            PBEKeySpec spec = new PBEKeySpec(
+                    rawPassword.toCharArray(),
+                    salt.getBytes(StandardCharsets.UTF_8),
+                    iterations,
+                    PBKDF2_KEY_BITS
+            );
+            SecretKeyFactory skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+            byte[] hash = skf.generateSecret(spec).getEncoded();
+            spec.clearPassword();
+            return "PBKDF2$" + iterations + "$" + salt + "$" + Base64.getEncoder().encodeToString(hash);
         } catch (Exception e) {
             throw new RuntimeException("Error hashing password", e);
         }
     }
 
+    private String hashPasswordLegacySha256(String rawPassword, String salt) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] encoded = digest.digest((salt + ":" + rawPassword).getBytes(StandardCharsets.UTF_8));
+            return "SHA256$" + salt + "$" + Base64.getEncoder().encodeToString(encoded);
+        } catch (Exception e) {
+            throw new RuntimeException("Error verifying legacy hash", e);
+        }
+    }
+
     private String generateSalt() {
         byte[] saltBytes = new byte[16];
-        new SecureRandom().nextBytes(saltBytes);
+        SECURE_RANDOM.nextBytes(saltBytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(saltBytes);
+    }
+
+    private String generateSessionToken() {
+        byte[] tokenBytes = new byte[32]; // 256 bits of CSPRNG entropy
+        SECURE_RANDOM.nextBytes(tokenBytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
     }
 
     private boolean verifyPassword(String rawPassword, String storedPassword) {
         if (rawPassword == null || storedPassword == null) return false;
+        if (storedPassword.startsWith("PBKDF2$")) {
+            String[] parts = storedPassword.split("\\$");
+            if (parts.length == 4) {
+                try {
+                    int iterations = Integer.parseInt(parts[1]);
+                    String expectedHash = hashPasswordPbkdf2(rawPassword, parts[2], iterations);
+                    return MessageDigest.isEqual(
+                            expectedHash.getBytes(StandardCharsets.UTF_8),
+                            storedPassword.getBytes(StandardCharsets.UTF_8)
+                    );
+                } catch (NumberFormatException ignored) {
+                    return false;
+                }
+            }
+            return false;
+        }
         if (storedPassword.startsWith("SHA256$")) {
             String[] parts = storedPassword.split("\\$");
             if (parts.length == 3) {
-                String expectedHash = hashPassword(rawPassword, parts[1]);
+                String expectedHash = hashPasswordLegacySha256(rawPassword, parts[1]);
                 return MessageDigest.isEqual(
                         expectedHash.getBytes(StandardCharsets.UTF_8),
                         storedPassword.getBytes(StandardCharsets.UTF_8)
@@ -120,7 +169,7 @@ public class StaffController {
             }
             return false;
         }
-        return storedPassword.equals(rawPassword);
+        return false; // Plaintext fallback removed
     }
 
     // 8-64 chars: at least 1 lowercase, 1 uppercase, 1 number, and 1 special symbol (@ ! # $ % etc.)
@@ -133,10 +182,20 @@ public class StaffController {
     }
 
     private void recordFailedAttempt(String key) {
+        long now = System.currentTimeMillis();
+        if (FAILED_LOGINS.size() > 2_000) {
+            FAILED_LOGINS.entrySet().removeIf(e -> e.getValue().lockedUntil > 0 && e.getValue().lockedUntil < now);
+        }
         LoginAttempt attempt = FAILED_LOGINS.computeIfAbsent(key, k -> new LoginAttempt());
-        attempt.count++;
-        if (attempt.count >= MAX_FAILED_ATTEMPTS) {
-            attempt.lockedUntil = System.currentTimeMillis() + LOCKOUT_MS;
+        synchronized (attempt) {
+            if (attempt.lockedUntil > 0 && attempt.lockedUntil <= now) {
+                attempt.count = 0;
+                attempt.lockedUntil = 0;
+            }
+            attempt.count++;
+            if (attempt.count >= MAX_FAILED_ATTEMPTS) {
+                attempt.lockedUntil = now + LOCKOUT_MS;
+            }
         }
     }
 
@@ -151,8 +210,8 @@ public class StaffController {
         }
 
         String cleanUsername = newStaff.getUsername() != null ? newStaff.getUsername().trim() : "";
-        if (cleanUsername.length() < 3) {
-            return ResponseEntity.badRequest().body("Username must be at least 3 characters.");
+        if (cleanUsername.length() < 3 || cleanUsername.length() > 40) {
+            return ResponseEntity.badRequest().body("Username must be between 3 and 40 characters.");
         }
 
         if (!isStrongPassword(newStaff.getPassword())) {
@@ -165,14 +224,18 @@ public class StaffController {
             return ResponseEntity.status(409).body("Username already exists.");
         }
 
-        newStaff.setUsername(cleanUsername);
-        newStaff.setRole((newStaff.getRole() == null || newStaff.getRole().trim().isEmpty())
-                ? "STAFF" : newStaff.getRole().trim().toUpperCase());
+        String requestedRole = newStaff.getRole() != null ? newStaff.getRole().trim().toUpperCase() : "STAFF";
+        String safeRole = "ADMIN".equals(requestedRole) ? "ADMIN" : "STAFF";
+        if (existingStaffCount == 0) {
+            safeRole = "ADMIN"; // First bootstrap account must always be ADMIN
+        }
 
-        String salt = generateSalt();
-        newStaff.setPassword(hashPassword(newStaff.getPassword(), salt));
+        StaffMember cleanStaff = new StaffMember();
+        cleanStaff.setUsername(cleanUsername);
+        cleanStaff.setRole(safeRole);
+        cleanStaff.setPassword(hashPassword(newStaff.getPassword(), generateSalt()));
 
-        return ResponseEntity.ok(staffRepository.save(newStaff));
+        return ResponseEntity.ok(staffRepository.save(cleanStaff));
     }
 
     @PostMapping("/login")
@@ -208,13 +271,13 @@ public class StaffController {
         if (staff != null && verifyPassword(password, staff.getPassword())) {
             FAILED_LOGINS.remove(attemptKey);
 
-            if (!staff.getPassword().startsWith("SHA256$")) {
-                String salt = generateSalt();
-                staff.setPassword(hashPassword(password, salt));
+            // Auto-migrate legacy SHA256$ hashes to PBKDF2-HMAC-SHA256 on next successful login
+            if (!staff.getPassword().startsWith("PBKDF2$")) {
+                staff.setPassword(hashPassword(password, generateSalt()));
                 staffRepository.save(staff);
             }
 
-            String sessionToken = UUID.randomUUID().toString() + "-" + UUID.randomUUID().toString();
+            String sessionToken = generateSessionToken();
             ACTIVE_TOKENS.put(sessionToken, new StaffSession(
                     staff.getUsername(),
                     staff.getRole(),

@@ -143,22 +143,34 @@ public class ReviewController {
     }
 
     @PostMapping
-    public ResponseEntity<?> createWebsiteReview(@RequestBody SiteReview review) {
-        if (review.getGuestName() == null || review.getGuestName().trim().length() < 2) {
-            return ResponseEntity.badRequest().body("Please enter your name.");
+    public ResponseEntity<?> createWebsiteReview(@RequestBody SiteReview incoming) {
+        String guestName = incoming.getGuestName() != null ? incoming.getGuestName().trim() : "";
+        String comment = incoming.getComment() != null ? incoming.getComment().trim() : "";
+        String foodHighlight = incoming.getFoodHighlight() != null ? incoming.getFoodHighlight().trim() : "";
+
+        if (guestName.length() < 2 || guestName.length() > 60) {
+            return ResponseEntity.badRequest().body("Please enter a name between 2 and 60 characters.");
         }
-        if (review.getRating() < 1 || review.getRating() > 5) {
+        if (incoming.getRating() < 1 || incoming.getRating() > 5) {
             return ResponseEntity.badRequest().body("Rating must be between 1 and 5 stars.");
         }
-        if (review.getComment() == null || review.getComment().trim().length() < 8) {
-            return ResponseEntity.badRequest().body("Please write at least a short sentence about your visit.");
+        if (comment.length() < 8 || comment.length() > 1000) {
+            return ResponseEntity.badRequest().body("Review comment must be between 8 and 1000 characters.");
+        }
+        if (foodHighlight.isEmpty()) {
+            foodHighlight = "Turkish Grill & Meze";
+        } else if (foodHighlight.length() > 80) {
+            foodHighlight = foodHighlight.substring(0, 80);
         }
 
-        review.setGuestName(review.getGuestName().trim());
-        review.setComment(review.getComment().trim());
-        review.setFoodHighlight(review.getFoodHighlight() != null ? review.getFoodHighlight().trim() : "Turkish Grill & Meze");
-        review.setCreatedAt(Instant.now());
-        return ResponseEntity.ok(reviewRepository.save(review));
+        // Security: Always construct a new entity so untrusted JSON cannot inject an existing ID (Mass Assignment)
+        SiteReview cleanReview = new SiteReview();
+        cleanReview.setGuestName(guestName);
+        cleanReview.setRating(incoming.getRating());
+        cleanReview.setComment(comment);
+        cleanReview.setFoodHighlight(foodHighlight);
+        cleanReview.setCreatedAt(Instant.now());
+        return ResponseEntity.ok(reviewRepository.save(cleanReview));
     }
 
     @DeleteMapping("/{id}")

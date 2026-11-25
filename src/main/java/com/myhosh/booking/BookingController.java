@@ -101,6 +101,21 @@ public class BookingController {
         return masked;
     }
 
+    // Security (OWASP API3): Strip consent timestamps & internal keys for non-ADMIN floor staff using a detached copy
+    private Booking maskForFloorStaff(Booking b) {
+        Booking copy = new Booking();
+        copy.setId(b.getId());
+        copy.setBookingDate(b.getBookingDate());
+        copy.setBookingTime(b.getBookingTime());
+        copy.setPartySize(b.getPartySize());
+        copy.setStatus(b.getStatus());
+        copy.setSpecialRequests(b.getSpecialRequests());
+        copy.setCustomer(b.getCustomer());
+        copy.setRestaurantTable(b.getRestaurantTable());
+        copy.setCompletedAt(b.getCompletedAt());
+        return copy;
+    }
+
     private boolean isRangesOverlap(LocalTime start1, LocalTime start2) {
         if (start1 == null || start2 == null) return false;
         LocalTime end1 = start1.plusMinutes(120);
@@ -112,7 +127,11 @@ public class BookingController {
     public List<Booking> getAllBookings(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
         LocalDate today = LocalDate.now(LONDON_ZONE);
         if (StaffController.isValidStaffToken(token)) {
-            return bookingRepository.findByBookingDateGreaterThanEqualOrderByBookingDateAscBookingTimeAsc(today);
+            List<Booking> bookings = bookingRepository.findByBookingDateGreaterThanEqualOrderByBookingDateAscBookingTimeAsc(today);
+            if (StaffController.isAdminToken(token)) {
+                return bookings;
+            }
+            return bookings.stream().map(this::maskForFloorStaff).toList();
         }
         return bookingRepository.findPublicUpcomingBookings(today).stream()
                 .map(this::maskPublicBooking)
@@ -137,7 +156,11 @@ public class BookingController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized: Staff authentication required.");
         }
         LocalDate today = LocalDate.now(LONDON_ZONE);
-        return ResponseEntity.ok(bookingRepository.findByBookingDateOrderByBookingTimeAsc(today));
+        List<Booking> bookings = bookingRepository.findByBookingDateOrderByBookingTimeAsc(today);
+        if (StaffController.isAdminToken(token)) {
+            return ResponseEntity.ok(bookings);
+        }
+        return ResponseEntity.ok(bookings.stream().map(this::maskForFloorStaff).toList());
     }
 
     @PostMapping
