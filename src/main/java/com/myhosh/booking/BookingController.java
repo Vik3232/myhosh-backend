@@ -348,11 +348,6 @@ public class BookingController {
         if (!StaffController.isValidStaffToken(token)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
         }
-        if (!StaffController.isAdminToken(token)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body("Forbidden: ADMIN access required to export marketing opt-ins.");
-        }
-
         Optional<Booking> bookingOpt = bookingRepository.findById(id);
         if (bookingOpt.isEmpty()) return ResponseEntity.notFound().build();
 
@@ -427,6 +422,10 @@ public class BookingController {
 
         if (!StaffController.isValidStaffToken(token)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized");
+        }
+        if (!StaffController.isAdminToken(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Forbidden: ADMIN access required to export marketing opt-ins.");
         }
 
         List<Booking> optedIn = bookingRepository.findMarketingOptInBookings();
