@@ -90,16 +90,14 @@ public class BookingController {
         }
     }
 
-    private Booking maskPublicBooking(Booking b) {
-        Booking masked = new Booking();
-        masked.setId(b.getId());
-        masked.setBookingDate(b.getBookingDate());
-        masked.setBookingTime(b.getBookingTime());
-        masked.setPartySize(b.getPartySize());
-        masked.setStatus(b.getStatus());
-        masked.setRestaurantTable(b.getRestaurantTable());
-        return masked;
-    }
+    public record PublicBookingSlotDto(
+            Long id,
+            LocalDate bookingDate,
+            LocalTime bookingTime,
+            Integer partySize,
+            String status,
+            RestaurantTable restaurantTable
+    ) {}
 
     // Security (OWASP API3): Strip consent timestamps & internal keys for non-ADMIN floor staff using a detached copy
     private Booking maskForFloorStaff(Booking b) {
@@ -124,18 +122,26 @@ public class BookingController {
     }
 
     @GetMapping
-    public List<Booking> getAllBookings(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
+    public ResponseEntity<?> getAllBookings(@RequestHeader(value = "X-Staff-Token", required = false) String token) {
         LocalDate today = LocalDate.now(LONDON_ZONE);
         if (StaffController.isValidStaffToken(token)) {
             List<Booking> bookings = bookingRepository.findByBookingDateGreaterThanEqualOrderByBookingDateAscBookingTimeAsc(today);
             if (StaffController.isAdminToken(token)) {
-                return bookings;
+                return ResponseEntity.ok(bookings);
             }
-            return bookings.stream().map(this::maskForFloorStaff).toList();
+            return ResponseEntity.ok(bookings.stream().map(this::maskForFloorStaff).toList());
         }
-        return bookingRepository.findPublicUpcomingBookings(today).stream()
-                .map(this::maskPublicBooking)
+        List<PublicBookingSlotDto> publicSlots = bookingRepository.findPublicUpcomingBookings(today).stream()
+                .map(b -> new PublicBookingSlotDto(
+                        b.getId(),
+                        b.getBookingDate(),
+                        b.getBookingTime(),
+                        b.getPartySize(),
+                        b.getStatus(),
+                        b.getRestaurantTable()
+                ))
                 .toList();
+        return ResponseEntity.ok(publicSlots);
     }
 
     @GetMapping("/history")
