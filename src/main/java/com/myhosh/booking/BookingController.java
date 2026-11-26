@@ -143,11 +143,24 @@ public class BookingController {
         if (!StaffController.isValidStaffToken(token)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized: Staff authentication required.");
         }
-        if (!StaffController.isAdminToken(token)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: ADMIN access required to view booking history.");
-        }
         LocalDate today = LocalDate.now(LONDON_ZONE);
-        return ResponseEntity.ok(bookingRepository.findByBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(today));
+        if (StaffController.isAdminToken(token)) {
+            return ResponseEntity.ok(
+                    bookingRepository.findByBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(today)
+            );
+        }
+
+        // Floor STAFF: rolling 15-day lookback only, with consent/internal fields stripped
+        LocalDate fifteenDaysAgo = today.minusDays(15);
+        List<Booking> recentHistory = bookingRepository
+                .findByBookingDateGreaterThanEqualAndBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(
+                        fifteenDaysAgo,
+                        today
+                )
+                .stream()
+                .map(this::maskForFloorStaff)
+                .toList();
+        return ResponseEntity.ok(recentHistory);
     }
 
     @GetMapping("/today")

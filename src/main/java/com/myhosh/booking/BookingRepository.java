@@ -42,6 +42,12 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     @EntityGraph(attributePaths = {"customer", "restaurantTable"})
     List<Booking> findByBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(LocalDate date);
 
+    @EntityGraph(attributePaths = {"customer", "restaurantTable"})
+    List<Booking> findByBookingDateGreaterThanEqualAndBookingDateBeforeOrderByBookingDateDescBookingTimeAsc(
+            LocalDate startDate,
+            LocalDate endDate
+    );
+
     @Modifying
     @Transactional
     @Query("DELETE FROM Booking b WHERE b.bookingDate < :cutoffDate")
