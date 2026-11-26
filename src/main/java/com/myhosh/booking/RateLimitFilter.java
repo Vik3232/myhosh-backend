@@ -31,22 +31,43 @@ public class RateLimitFilter implements Filter {
     private static final int MAX_TRACKED_KEYS = 2_000;
 
     private String getClientIp(HttpServletRequest request) {
-        // Render / Cloudflare edge overwrites these headers with the true visitor IP
         String cfIp = request.getHeader("CF-Connecting-IP");
-        if (cfIp != null && !cfIp.isBlank()) {
-            return cfIp.trim();
-        }
+        if (cfIp != null && !cfIp.isBlank()) return cfIp.trim();
+
         String trueClientIp = request.getHeader("True-Client-IP");
-        if (trueClientIp != null && !trueClientIp.isBlank()) {
-            return trueClientIp.trim();
-        }
-        // Never trust index [0] of X-Forwarded-For (attacker-spoofable); use the rightmost proxy-appended IP
+        if (trueClientIp != null && !trueClientIp.isBlank()) return trueClientIp.trim();
+
         String forwarded = request.getHeader("X-Forwarded-For");
         if (forwarded != null && !forwarded.isBlank()) {
             String[] parts = forwarded.split(",");
             return parts[parts.length - 1].trim();
         }
         return request.getRemoteAddr();
+    }
+
+    private boolean isAllowedOrigin(String origin) {
+        if (origin == null || origin.isBlank()) return false;
+        return origin.matches("^http://localhost:\\d+$")
+                || origin.matches("^https://myhosh-[a-zA-Z0-9-]+\\.vercel\\.app$")
+                || origin.equals("https://myhosh-salisbury.co.uk")
+                || origin.matches("^https://[a-zA-Z0-9-]+\\.myhosh-salisbury\\.co\\.uk$")
+                || origin.equals("https://myhosh.co.uk")
+                || origin.matches("^https://[a-zA-Z0-9-]+\\.myhosh\\.co\\.uk$");
+    }
+
+    private void writeRateLimitResponse(HttpServletRequest request, HttpServletResponse response, String message)
+            throws IOException {
+        // Attach CORS headers on short-circuited 429s since Spring MVC CorsConfig won't execute
+        String origin = request.getHeader("Origin");
+        if (isAllowedOrigin(origin)) {
+            response.setHeader("Access-Control-Allow-Origin", origin);
+            response.setHeader("Vary", "Origin");
+            response.setHeader("Access-Control-Expose-Headers", "Retry-After");
+        }
+        response.setStatus(429);
+        response.setHeader("Retry-After", "60");
+        response.setContentType("text/plain;charset=UTF-8");
+        response.getWriter().write(message);
     }
 
     private void evictExpiredBucketsIfNeeded(long now) {
@@ -92,7 +113,6 @@ public class RateLimitFilter implements Filter {
 
         applySecurityHeaders(response, path);
 
-        // Always allow CORS preflight OPTIONS and Uptime Robot health checks
         if ("OPTIONS".equalsIgnoreCase(method) || "/api/health".equals(path)) {
             chain.doFilter(req, res);
             return;
@@ -100,33 +120,19 @@ public class RateLimitFilter implements Filter {
 
         String clientIp = getClientIp(request);
 
-        // 1. Strict Brute-Force Shield on Staff Login (Max 5 per minute per IP)
         if ("/api/staff/login".equals(path) && "POST".equalsIgnoreCase(method)) {
             if (!isAllowed(clientIp + ":LOGIN", 5)) {
-                response.setStatus(429);
-                response.setHeader("Retry-After", "60");
-                response.setContentType("text/plain;charset=UTF-8");
-                response.getWriter().write("Too many login attempts. Please wait 60 seconds and try again.");
+                writeRateLimitResponse(request, response, "Too many login attempts. Please wait 60 seconds and try again.");
                 return;
             }
-        }
-        // 2. Anti-Bot Shield on Reservation & Review Creation (Max 10 per minute per IP)
-        else if (("/api/bookings".equals(path) || "/api/reviews".equals(path)) && "POST".equalsIgnoreCase(method)) {
+        } else if (("/api/bookings".equals(path) || "/api/reviews".equals(path)) && "POST".equalsIgnoreCase(method)) {
             if (!isAllowed(clientIp + ":PUBLIC_POST", 10)) {
-                response.setStatus(429);
-                response.setHeader("Retry-After", "60");
-                response.setContentType("text/plain;charset=UTF-8");
-                response.getWriter().write("Too many requests from this network. Please wait a minute.");
+                writeRateLimitResponse(request, response, "Too many requests from this network. Please wait a minute.");
                 return;
             }
-        }
-        // 3. General API Flood Protection (Max 60 requests per minute per IP)
-        else {
+        } else {
             if (!isAllowed(clientIp + ":GENERAL", 60)) {
-                response.setStatus(429);
-                response.setHeader("Retry-After", "60");
-                response.setContentType("text/plain;charset=UTF-8");
-                response.getWriter().write("Rate limit exceeded. Please slow down.");
+                writeRateLimitResponse(request, response, "Rate limit exceeded. Please slow down.");
                 return;
             }
         }
