@@ -5,6 +5,7 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.HtmlUtils;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -12,11 +13,18 @@ import java.util.concurrent.CompletableFuture;
 public class EmailService {
 
     private final JavaMailSender mailSender;
-    private final String fromEmail = "MyHosh Salisbury <vis628385@gmail.com>";
+    private final String fromEmail;
+    private final String replyToEmail;
 
-    public EmailService(JavaMailSender mailSender) {
+    public EmailService(
+            JavaMailSender mailSender,
+            @Value("${app.mail.from}") String fromEmail,
+            @Value("${app.mail.reply-to}") String replyToEmail) {
         this.mailSender = mailSender;
+        this.fromEmail = fromEmail;
+        this.replyToEmail = replyToEmail;
     }
+
 
     // Bounce Guard: Never send to null, empty, or internal .local dummy addresses
     private boolean isValidRecipient(String to) {
@@ -159,13 +167,17 @@ public class EmailService {
                 .replace("{{REF}}", refCode)
                 .replace("{{DATE}}", safeDate)
                 .replace("{{TIME}}", safeTime)
+
                 .replace("{{GUESTS}}", guestsLabel);
+
+
 
         CompletableFuture.runAsync(() -> {
             try {
                 MimeMessage mimeMessage = mailSender.createMimeMessage();
                 MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, true, "UTF-8");
                 helper.setFrom(fromEmail);
+                helper.setReplyTo(replyToEmail);
                 helper.setTo(to.trim());
                 helper.setSubject("Reservation confirmed (" + refCode + ") | MyHosh Salisbury");
                 helper.setText(htmlBody, true);
@@ -276,6 +288,7 @@ public class EmailService {
                 MimeMessage mimeMessage = mailSender.createMimeMessage();
                 MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, true, "UTF-8");
                 helper.setFrom(fromEmail);
+                helper.setReplyTo(replyToEmail);
                 helper.setTo(to.trim());
                 helper.setSubject("Reservation cancelled | MyHosh Salisbury");
                 helper.setText(htmlBody, true);
@@ -373,6 +386,7 @@ public class EmailService {
                 MimeMessage mimeMessage = mailSender.createMimeMessage();
                 MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, true, "UTF-8");
                 helper.setFrom(fromEmail);
+                helper.setReplyTo(replyToEmail);
                 helper.setTo(to.trim());
                 helper.setSubject("Thank you for dining at MyHosh Salisbury");
                 helper.setText(htmlBody, true);
